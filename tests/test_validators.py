@@ -9,6 +9,7 @@ import pytest
 from src.core.config import Settings
 from src.ingestion.pdf_inspector import PDFInspector
 from src.pipeline.orchestrator import build_orchestrator
+from src.pipeline.resolver import TemporalResolver
 from rapidfuzz import fuzz
 
 from src.pipeline.validators import (
@@ -17,9 +18,13 @@ from src.pipeline.validators import (
     TEMPORAL_INCONSISTENCY_REASON,
     VALUE_NOT_IN_QUOTE_REASON,
     apply_confidence_routing,
+    canonicalize_numbers,
     digit_tokens,
     normalize_for_grounding,
     spanish_amount_to_words,
+    spanish_numbers_in_text,
+    spanish_ordinals_in_text,
+    spanish_words_to_int,
     verify_capital_consistency,
     verify_grounding,
     verify_temporal_consistency,
@@ -479,13 +484,15 @@ GROUNDING_PAGE: str = (
 """Synthetic page used by the hardened grounding tests."""
 
 
-def _grounded(quote: str) -> bool:
-    """Run the grounding check of one quote against :data:`GROUNDING_PAGE`.
+def _grounded(quote: str, page: str = GROUNDING_PAGE) -> bool:
+    """Run the grounding check of one quote against a page.
 
     Parameters
     ----------
     quote : str
         Evidence quote.
+    page : str, default GROUNDING_PAGE
+        Page text.
 
     Returns
     -------
@@ -513,7 +520,7 @@ def _grounded(quote: str) -> bool:
             "capital_social_actual": {"status": "no_encontrado"},
         }
     )
-    verify_grounding(model, {1: GROUNDING_PAGE})
+    verify_grounding(model, {1: page})
     assert model.numero_escritura.evidence is not None
     return model.numero_escritura.evidence.grounding_verified
 
@@ -549,6 +556,11 @@ def test_grounding_rejects_altered_quotes(quote: str) -> None:
         "ante el Licenciado ARTURO VILLASENOR ORTIZ Notario Publico Numero 15 de Guadalajara Jalisco",
         "ante el Licenciado ARTURO VILLASEÑOR ORTlZ, Notario Publico Numero 15 de Guadalajara, Jalisco",
         "cantidad actual de $1.000.000,00 (UN MILLON DE PESOS 00/100 MONEDA NACIONAL)",
+        "Guadalajara, Jalisco, a 1O de mayo de 2019, ante el Licenciado",
+        "ESCRITURA PUBLICA NUMERO 3O,100 (TREINTA MIL CIEN)",
+        "cantidad actual de $1,OOO,000.00 (UN MILLON DE PESOS 00/100 MONEDA NACIONAL)",
+        "ESCRITURA PUBLICA NUMERO 30, 100 (TREINTA MIL CIEN)",
+        "comparecen el LIC. JUAN CARLOS PEREZ L0PEZ y la C. MARIA ELENA T0RRES VEGA. Se aprueba",
     ],
 )
 def test_grounding_tolerates_ocr_variations(quote: str) -> None:
@@ -762,3 +774,252 @@ def test_value_in_quote_accepts_notary_number_in_words(raw_extractions: dict[str
     assert model.notario.evidence is not None
     model.notario.evidence.source_quote = "ante el Licenciado ARTURO VILLASEÑOR ORTIZ, Notario Publico numero QUINCE"
     assert verify_value_in_quote(model) == []
+
+
+def test_grounding_word_guard_checks_three_letter_words() -> None:
+    """A changed three-letter surname is rejected despite a high fuzzy score."""
+    page = (
+        "En este acto comparecen el LIC. JUAN CARLOS PEREZ GIL y la C. MARIA ELENA TORRES VEGA, "
+        "quienes manifiestan su conformidad con los terminos de la presente escritura."
+    )
+    quote = "comparecen el LIC. JUAN CARLOS PEREZ PAZ y la C. MARIA ELENA TORRES VEGA, quienes manifiestan"
+    assert fuzz.partial_ratio(normalize_for_grounding(quote), normalize_for_grounding(page)) >= 90.0
+    assert _grounded(quote, page) is False
+    assert _grounded(quote.replace("PAZ", "GIL"), page) is True
+
+
+def test_canonicalize_numbers() -> None:
+    """OCR confusables and thousands separators are canonicalized inside numbers only."""
+    assert canonicalize_numbers("$1,OOO,000.00") == "$100000000"
+    assert canonicalize_numbers("NUMERO 3O,100") == "NUMERO 30100"
+    assert canonicalize_numbers("NUMERO 30, 100") == "NUMERO 30100"
+    assert canonicalize_numbers("A 1O DE MAYO") == "A 10 DE MAYO"
+    assert canonicalize_numbers("L0PEZ OIL LO") == "L0PEZ OIL LO"
+
+
+def test_revoked_appointment_evidence_is_grounded(
+    settings: Settings, sample_paths: dict[str, Path], raw_extractions: dict[str, RawDeedExtraction]
+) -> None:
+    """Revoked appointment evidence is grounded and a failure flags representantes_legales.
+
+    Parameters
+    ----------
+    settings : Settings
+        Isolated settings.
+    sample_paths : dict of str to Path
+        Generated sample PDFs.
+    raw_extractions : dict of str to RawDeedExtraction
+        Cached raw extractions per acta.
+    """
+    resolved = TemporalResolver(settings).resolve(raw_extractions["acta_c"], job_id="job", doc_sha256="c" * 64)
+    texts = _page_texts(settings, sample_paths["acta_c"])
+    revocation = next(e for e in resolved.amendment_history if e.event_type is AmendmentType.REVOCATION)
+    assert len(revocation.revoked_appointment_evidence) == 1
+    assert verify_grounding(resolved, texts) == []
+    assert revocation.revoked_appointment_evidence[0].grounding_verified is True
+
+    tampered = TemporalResolver(settings).resolve(raw_extractions["acta_c"], job_id="job", doc_sha256="c" * 64)
+    event = next(e for e in tampered.amendment_history if e.event_type is AmendmentType.REVOCATION)
+    event.revoked_appointment_evidence[0].page_number = 3
+    failures = verify_grounding(tampered, texts)
+    assert any("revoked_appointment_evidence[0]" in failure for failure in failures)
+    assert event.revoked_appointment_evidence[0].grounding_verified is False
+    assert tampered.representantes_legales.requires_human_review is True
+    assert "revoked appointment evidence" in (tampered.representantes_legales.review_reason or "")
+    assert tampered.capital_social_actual.requires_human_review is False
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("UNO", 1),
+        ("UNA", 1),
+        ("VEINTIUNO", 21),
+        ("VEINTINUEVE", 29),
+        ("DIEZ Y SEIS", 16),
+        ("TREINTA Y UNO", 31),
+        ("DOS MIL VEINTIUNO", 2021),
+        ("DOS MIL DIECINUEVE", 2019),
+        ("MIL NOVECIENTOS NOVENTA Y NUEVE", 1999),
+        ("CUARENTA Y CINCO MIL CIENTO VEINTE", 45120),
+        ("TREINTA MIL CIEN", 30100),
+        ("UN MILLON", 1000000),
+        ("DOS MILLONES QUINIENTOS MIL", 2500000),
+        ("NOVECIENTOS NOVENTA Y NUEVE MILLONES NOVECIENTOS NOVENTA Y NUEVE MIL NOVECIENTOS NOVENTA Y NUEVE", 999999999),
+        ("CERO", 0),
+    ],
+)
+def test_spanish_words_to_int(text: str, expected: int) -> None:
+    """Spanish cardinal phrases parse to integers.
+
+    Parameters
+    ----------
+    text : str
+        Phrase in words.
+    expected : int
+        Expected value.
+    """
+    assert spanish_words_to_int(text) == expected
+
+
+def test_spanish_number_scanning() -> None:
+    """Numbers and ordinals are found inside longer texts; invalid sequences are rejected."""
+    assert spanish_numbers_in_text("(UN MILLON DE PESOS 00/100)") == [1000000]
+    assert spanish_words_to_int("DOS TRES") is None
+    assert spanish_words_to_int("UN MILLON DE PESOS") is None
+    assert spanish_ordinals_in_text("Notaria Publica DECIMO QUINTA") == [15]
+    assert spanish_ordinals_in_text("DECIMOQUINTO, VIGESIMO, TRIGESIMO, UNDECIMO, PRIMERA") == [15, 20, 30, 11, 1]
+
+
+def _scalar_model(raw: RawDeedExtraction, field: str, quote: str) -> RawDeedExtraction:
+    """Replace the quote of one scalar field of an extraction.
+
+    Parameters
+    ----------
+    raw : RawDeedExtraction
+        Extraction (mutated).
+    field : str
+        Scalar contract field name.
+    quote : str
+        New evidence quote.
+
+    Returns
+    -------
+    RawDeedExtraction
+        The same extraction.
+    """
+    evidence = getattr(raw, field).evidence
+    assert evidence is not None
+    evidence.source_quote = quote
+    return raw
+
+
+@pytest.mark.parametrize(
+    ("value", "quote", "supported"),
+    [
+        ("2019-05-10", "Guadalajara, 10.05.2019", True),
+        ("2019-05-10", "Guadalajara, 10-05-2019", True),
+        ("2019-05-10", "Guadalajara, 10/05/2019", True),
+        ("2019-05-10", "Guadalajara, 11.05.2019", False),
+        ("2019-05-16", "a los diez y seis dias de mayo de dos mil diecinueve", True),
+        ("2021-05-31", "a los treinta y un dias de mayo de dos mil veintiuno", True),
+        ("2021-05-21", "a los veintiun dias de mayo de dos mil veintiuno", True),
+        ("2021-05-21", "a los veintiun dias de mayo de dos mil veintidos", False),
+    ],
+)
+def test_value_in_quote_date_formats(
+    raw_extractions: dict[str, RawDeedExtraction], value: str, quote: str, supported: bool
+) -> None:
+    """Numeric date formats and dates in words are supported.
+
+    Parameters
+    ----------
+    raw_extractions : dict of str to RawDeedExtraction
+        Cached raw extractions per acta.
+    value : str
+        ISO date value.
+    quote : str
+        Evidence quote.
+    supported : bool
+        Expected outcome.
+    """
+    model = _scalar_model(raw_extractions["acta_c"], "fecha_constitucion", quote)
+    model.fecha_constitucion.value = value
+    assert ("fecha_constitucion" not in verify_value_in_quote(model)) is supported
+
+
+@pytest.mark.parametrize(
+    ("number", "quote", "supported"),
+    [
+        (15, "Notario Publico DECIMO QUINTO de Guadalajara", True),
+        (15, "Notaria Publica DECIMOQUINTA de Guadalajara", True),
+        (1, "Notario Publico PRIMERO de Guadalajara", True),
+        (20, "Notario Publico VIGESIMO de Guadalajara", True),
+        (23, "Notario Publico VIGESIMO TERCERO de Guadalajara", True),
+        (30, "Notario Publico TRIGESIMO de Guadalajara", True),
+        (21, "Notario Publico numero VEINTIUNO de Guadalajara", True),
+        (16, "Notario Publico numero DIEZ Y SEIS de Guadalajara", True),
+        (15, "Notario Publico DECIMO SEXTO de Guadalajara", False),
+    ],
+)
+def test_value_in_quote_notary_ordinals(
+    raw_extractions: dict[str, RawDeedExtraction], number: int, quote: str, supported: bool
+) -> None:
+    """Notary numbers written as ordinals or words are supported.
+
+    Parameters
+    ----------
+    raw_extractions : dict of str to RawDeedExtraction
+        Cached raw extractions per acta.
+    number : int
+        Notary number value.
+    quote : str
+        Evidence quote.
+    supported : bool
+        Expected outcome.
+    """
+    model = _scalar_model(raw_extractions["acta_c"], "notario", quote)
+    assert model.notario.value is not None
+    model.notario.value = NotaryInfo(
+        nombre=model.notario.value.nombre, numero_notaria=number, entidad_federativa="Jalisco"
+    )
+    assert ("notario" not in verify_value_in_quote(model)) is supported
+
+
+@pytest.mark.parametrize(
+    ("quote", "supported"),
+    [
+        ("capital social de $1'000,000.00 M.N.", True),
+        ("capital social de $1 000 000.00 M.N.", True),
+        ("capital social de $1.000.000,00 M.N.", True),
+        ("capital social de UN MILLON DE PESOS 00/100 MONEDA NACIONAL", True),
+        ("capital social de DOS MILLONES DE PESOS 00/100 MONEDA NACIONAL", False),
+        ("capital social de $1'500,000.00 M.N.", False),
+    ],
+)
+def test_value_in_quote_amount_formats(
+    raw_extractions: dict[str, RawDeedExtraction], quote: str, supported: bool
+) -> None:
+    """Amounts with apostrophe or space separators or only in words are supported.
+
+    Parameters
+    ----------
+    raw_extractions : dict of str to RawDeedExtraction
+        Cached raw extractions per acta.
+    quote : str
+        Evidence quote.
+    supported : bool
+        Expected outcome.
+    """
+    model = _scalar_model(raw_extractions["acta_c"], "capital_social_actual", quote)
+    assert model.capital_social_actual.value is not None
+    model.capital_social_actual.value.monto_numerico = 1000000.0
+    assert ("capital_social_actual" not in verify_value_in_quote(model)) is supported
+
+
+@pytest.mark.parametrize(
+    ("quote", "supported"),
+    [
+        ("ESCRITURA PUBLICA NUMERO 30 100", True),
+        ("ESCRITURA PUBLICA NUMERO TREINTA MIL CIEN", True),
+        ("ESCRITURA PUBLICA NUMERO 30'100", True),
+        ("ESCRITURA PUBLICA NUMERO TREINTA MIL SETECIENTOS", False),
+        ("ESCRITURA PUBLICA NUMERO 30 700", False),
+    ],
+)
+def test_value_in_quote_deed_number_formats(
+    raw_extractions: dict[str, RawDeedExtraction], quote: str, supported: bool
+) -> None:
+    """Deed numbers with space separators or in words are supported.
+
+    Parameters
+    ----------
+    raw_extractions : dict of str to RawDeedExtraction
+        Cached raw extractions per acta.
+    quote : str
+        Evidence quote.
+    supported : bool
+        Expected outcome.
+    """
+    model = _scalar_model(raw_extractions["acta_c"], "numero_escritura", quote)
+    assert ("numero_escritura" not in verify_value_in_quote(model)) is supported

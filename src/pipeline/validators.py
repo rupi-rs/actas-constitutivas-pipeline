@@ -59,11 +59,19 @@ VALUE_NOT_IN_QUOTE_REASON: str = "Value not supported by source quote"
 TEMPORAL_INCONSISTENCY_REASON: str = "Temporal inconsistency: act dated before the incorporation date"
 """Review reason prefix appended when an act predates ``fecha_constitucion``."""
 
-STRICT_FUZZY_SCORE: float = 97.0
-"""Fuzzy score from which a single one-character OCR misread in a word is tolerated."""
+STRICT_FUZZY_SCORE: float = 95.0
+"""Fuzzy score from which one-character OCR misreads in long words are tolerated."""
 
-MIN_CHECKED_WORD_LENGTH: int = 4
+MIN_CHECKED_WORD_LENGTH: int = 3
 """Minimum length of an alphabetic quote token that must appear in the page window."""
+
+MIN_SUBSTITUTION_WORD_LENGTH: int = 5
+"""Minimum length of a quote word that may differ from the page by one substituted character."""
+
+GROUNDING_STOPWORDS: frozenset[str] = frozenset(
+    {"DE", "DEL", "LA", "LAS", "LOS", "EL", "Y", "EN", "AL", "POR", "CON", "QUE", "SU", "SUS", "UN", "UNA"}
+)
+"""Spanish function words skipped by the grounding word guard."""
 
 GROUNDING_FAILED_CONFIDENCE_CAP: float = 0.40
 """Maximum confidence kept by evidence that fails the grounding check."""
@@ -94,9 +102,21 @@ CONTRACT_FIELDS: tuple[str, ...] = (
 
 _WHITESPACE_RE: re.Pattern[str] = re.compile(r"\s+")
 _DIGIT_TOKEN_RE: re.Pattern[str] = re.compile(r"\d+(?:[.,]\d+)*")
-_ALPHA_TOKEN_RE: re.Pattern[str] = re.compile(r"[A-Z]+")
+_WORD_TOKEN_RE: re.Pattern[str] = re.compile(r"[A-Z0-9]*[A-Z][A-Z0-9]*")
+_STANDALONE_DIGITS_RE: re.Pattern[str] = re.compile(r"(?<![A-Z0-9])\d+(?![A-Z0-9])")
+_NUMERIC_RUN_RE: re.Pattern[str] = re.compile(r"(?<![A-Z0-9])[0-9OIL][0-9OIL,.'\u2019]*(?<![,.'\u2019])(?![A-Z0-9])")
+_THOUSANDS_GAP_RE: re.Pattern[str] = re.compile(r"(?<=\d)(?:[,.'\u2019] ?| )(?=\d{3}(?!\d))")
+_DECIMAL_SEPARATOR_RE: re.Pattern[str] = re.compile(r"(?<=\d)[.,](?=\d)")
+_CONFUSABLE_DIGITS: dict[int, str] = str.maketrans({"O": "0", "I": "1", "L": "1"})
+_NUMBER_WORD_TOKEN_RE: re.Pattern[str] = re.compile(r"[A-Z]+|[^A-Z\s]+")
+_AMOUNT_RE: re.Pattern[str] = re.compile(
+    r"(?<!\d)\d{1,3}(?:(?:[,'\u2019.]| )\d{3})+(?:[.,]\d{1,2})?(?!\d)|(?<!\d)\d+(?:[.,]\d{1,2})?(?!\d)"
+)
+_AMOUNT_CENTS_RE: re.Pattern[str] = re.compile(r"[.,]\d{1,2}$")
+_NUMERIC_DATE_RE: re.Pattern[str] = re.compile(r"(?<!\d)(\d{1,2})[./-](\d{1,2})[./-](\d{4})(?!\d)")
+_ISO_DATE_RE: re.Pattern[str] = re.compile(r"(?<!\d)(\d{4})-(\d{1,2})-(\d{1,2})(?!\d)")
+_DEED_VALUE_RE: re.Pattern[str] = re.compile(r"\d{1,3}(?:[,.' ]\d{3})+|\d+")
 _NON_ALNUM_RE: re.Pattern[str] = re.compile(r"[^A-Z0-9]")
-_CENTS_SUFFIX_RE: re.Pattern[str] = re.compile(r"[.,]\d{2}$")
 _SPANISH_MONTHS: tuple[str, ...] = (
     "ENERO",
     "FEBRERO",
@@ -169,6 +189,94 @@ _HUNDREDS: tuple[str, ...] = (
     "NOVECIENTOS",
 )
 _MAX_AMOUNT: int = 999_999_999
+
+_WORD_UNITS: dict[str, int] = {
+    "UN": 1,
+    "UNO": 1,
+    "UNA": 1,
+    "DOS": 2,
+    "TRES": 3,
+    "CUATRO": 4,
+    "CINCO": 5,
+    "SEIS": 6,
+    "SIETE": 7,
+    "OCHO": 8,
+    "NUEVE": 9,
+}
+_WORD_TEENS: dict[str, int] = {
+    "ONCE": 11,
+    "DOCE": 12,
+    "TRECE": 13,
+    "CATORCE": 14,
+    "QUINCE": 15,
+    "DIECISEIS": 16,
+    "DIECISIETE": 17,
+    "DIECIOCHO": 18,
+    "DIECINUEVE": 19,
+    "VEINTIUN": 21,
+    "VEINTIUNO": 21,
+    "VEINTIUNA": 21,
+    "VEINTIDOS": 22,
+    "VEINTITRES": 23,
+    "VEINTICUATRO": 24,
+    "VEINTICINCO": 25,
+    "VEINTISEIS": 26,
+    "VEINTISIETE": 27,
+    "VEINTIOCHO": 28,
+    "VEINTINUEVE": 29,
+}
+_WORD_TENS: dict[str, int] = {
+    "DIEZ": 10,
+    "VEINTE": 20,
+    "TREINTA": 30,
+    "CUARENTA": 40,
+    "CINCUENTA": 50,
+    "SESENTA": 60,
+    "SETENTA": 70,
+    "OCHENTA": 80,
+    "NOVENTA": 90,
+}
+_WORD_HUNDREDS: dict[str, int] = {
+    "CIEN": 100,
+    "CIENTO": 100,
+    **{f"{stem}{ending}": value for stem, value in (
+        ("DOSCIENT", 200),
+        ("TRESCIENT", 300),
+        ("CUATROCIENT", 400),
+        ("QUINIENT", 500),
+        ("SEISCIENT", 600),
+        ("SETECIENT", 700),
+        ("OCHOCIENT", 800),
+        ("NOVECIENT", 900),
+    ) for ending in ("OS", "AS")},
+}
+_ORDINAL_UNITS: dict[str, int] = {
+    **{f"{stem}{ending}": value for stem, value in (
+        ("PRIMER", 1),
+        ("SEGUND", 2),
+        ("TERCER", 3),
+        ("CUART", 4),
+        ("QUINT", 5),
+        ("SEXT", 6),
+        ("SEPTIM", 7),
+        ("SETIM", 7),
+        ("OCTAV", 8),
+        ("NOVEN", 9),
+    ) for ending in ("O", "A")},
+    "PRIMER": 1,
+    "TERCER": 3,
+}
+_ORDINAL_TENS: dict[str, int] = {
+    "DECIMO": 10,
+    "DECIMA": 10,
+    "VIGESIMO": 20,
+    "VIGESIMA": 20,
+    "TRIGESIMO": 30,
+    "TRIGESIMA": 30,
+}
+_ORDINAL_SPECIAL: dict[str, int] = {"UNDECIMO": 11, "UNDECIMA": 11, "DUODECIMO": 12, "DUODECIMA": 12}
+_COMPACT_ORDINAL_RE: re.Pattern[str] = re.compile(r"^(DECIM|VIGESIM|TRIGESIM)[OA]([A-Z]+)$")
+_STAGE_START, _STAGE_HUNDREDS, _STAGE_TENS, _STAGE_AFTER_Y, _STAGE_DONE = range(5)
 
 
 def normalize_for_grounding(text: str) -> str:
@@ -258,15 +366,62 @@ def _within_one_substitution(word: str, text: str) -> bool:
     return False
 
 
+def canonicalize_numbers(text: str) -> str:
+    """Canonicalize numbers in normalized text for OCR-tolerant comparison.
+
+    Parameters
+    ----------
+    text : str
+        Text already passed through :func:`normalize_for_grounding`.
+
+    Returns
+    -------
+    str
+        Text where, inside numeric runs that contain at least one digit,
+        the OCR confusables ``O`` -> ``0`` and ``I`` / ``L`` -> ``1`` are
+        replaced, and thousands / decimal separators (comma, period,
+        apostrophe, a comma followed by a space, or a space before a
+        three-digit group) are removed (``"$1,OOO,000.00"`` ->
+        ``"$100000000"``, ``"30, 100"`` -> ``"30100"``, ``"1O"`` -> ``"10"``).
+
+    Notes
+    -----
+    The same transformation is applied to the quote and the page, so
+    canonicalization never makes two different numbers equal: the
+    reviewer's altered amounts, notary numbers, deed numbers and years
+    still differ after it.
+    """
+
+    def _fix(match: re.Match[str]) -> str:
+        """Translate confusables in a numeric run that contains a digit.
+
+        Parameters
+        ----------
+        match : re.Match
+            Candidate numeric run.
+
+        Returns
+        -------
+        str
+            The translated run, or the run unchanged when it has no digit.
+        """
+        run = match.group(0)
+        return run.translate(_CONFUSABLE_DIGITS) if any(char.isdigit() for char in run) else run
+
+    fixed = _NUMERIC_RUN_RE.sub(_fix, text)
+    fixed = _THOUSANDS_GAP_RE.sub("", fixed)
+    return _DECIMAL_SEPARATOR_RE.sub("", fixed)
+
+
 def _fuzzy_window_supports(norm_quote: str, window: str, score: float) -> bool:
     """Apply the content guards of the fuzzy grounding path.
 
     Parameters
     ----------
     norm_quote : str
-        Normalized quote.
+        Normalized, number-canonicalized quote.
     window : str
-        Normalized best-aligned page window.
+        Normalized, number-canonicalized best-aligned page window.
     score : float
         ``partial_ratio`` of the quote against the page.
 
@@ -277,36 +432,45 @@ def _fuzzy_window_supports(norm_quote: str, window: str, score: float) -> bool:
 
     Notes
     -----
-    Guard (a), numbers: the multiset of digit groups of the quote
-    (separators removed) must be contained in the digit groups of the
-    window. It rejects altered amounts, dates and numbers that still score
-    above 90 (``"$7,000,000.00"`` against ``"$1,000,000.00"``,
-    ``"Numero 51"`` against ``"Numero 15"``, ``"2018"`` against
-    ``"2019"``).
+    Guard (a), numbers: the multiset of standalone digit groups of the
+    quote (see :func:`canonicalize_numbers`; digits embedded in words such
+    as ``"L0PEZ"`` are left to the word guard) must be contained in the
+    digit groups of the window. It rejects altered amounts, dates and
+    numbers that still score above 90 (``"$7,000,000.00"`` against
+    ``"$1,000,000.00"``, ``"Numero 51"`` against ``"Numero 15"``,
+    ``"2018"`` against ``"2019"``).
 
-    Guard (b), words: every alphabetic quote token of length >=
-    :data:`MIN_CHECKED_WORD_LENGTH` must occur in the window with
-    whitespace and punctuation removed. This rejects altered names
-    (``"PEREZ LOZANO"`` against ``"PEREZ LOPEZ"``) while tolerating OCR
-    whitespace and punctuation changes (``"PEREZLOPEZ"``) and accents
-    (both sides are accent-free). Only when the score is at least
-    :data:`STRICT_FUZZY_SCORE`, a single token may differ from the window
-    by one substituted character (a typical OCR misread such as
-    ``"ORTLZ"`` for ``"ORTIZ"``). Anything else is routed to human review,
-    which is the safe outcome.
+    Guard (b), words: every quote word of length >=
+    :data:`MIN_CHECKED_WORD_LENGTH` that is not in
+    :data:`GROUNDING_STOPWORDS` must occur in the window with whitespace
+    and punctuation removed. This rejects altered names (``"PEREZ
+    LOZANO"`` against ``"PEREZ LOPEZ"``, ``"PEREZ PAZ"`` against ``"PEREZ
+    GIL"``) while tolerating OCR whitespace and punctuation changes
+    (``"PEREZLOPEZ"``) and accents. Only when the score is at least
+    :data:`STRICT_FUZZY_SCORE`, each missing word of length >=
+    :data:`MIN_SUBSTITUTION_WORD_LENGTH` may differ from the window by one
+    substituted character (OCR misreads such as ``"ORTLZ"`` or
+    ``"L0PEZ"``). Anything else is routed to human review.
     """
-    quote_digits = Counter(digit_tokens(norm_quote))
-    window_digits = Counter(digit_tokens(window))
+    quote_digits = Counter(_STANDALONE_DIGITS_RE.findall(norm_quote))
+    window_digits = Counter(_STANDALONE_DIGITS_RE.findall(window))
     if quote_digits - window_digits:
         return False
     compact_window = _NON_ALNUM_RE.sub("", window)
-    words = [word for word in _ALPHA_TOKEN_RE.findall(norm_quote) if len(word) >= MIN_CHECKED_WORD_LENGTH]
+    words = [
+        word
+        for word in _WORD_TOKEN_RE.findall(norm_quote)
+        if len(word) >= MIN_CHECKED_WORD_LENGTH and word not in GROUNDING_STOPWORDS
+    ]
     missing = [word for word in words if word not in compact_window]
     if not missing:
         return True
-    if score < STRICT_FUZZY_SCORE or len(missing) > 1:
+    if score < STRICT_FUZZY_SCORE:
         return False
-    return _within_one_substitution(missing[0], compact_window)
+    return all(
+        len(word) >= MIN_SUBSTITUTION_WORD_LENGTH and _within_one_substitution(word, compact_window)
+        for word in missing
+    )
 
 
 def _quote_on_page(quote: str, page_text: str, threshold: float) -> tuple[bool, float]:
@@ -329,11 +493,12 @@ def _quote_on_page(quote: str, page_text: str, threshold: float) -> tuple[bool, 
 
     Notes
     -----
-    Deliberate hardening beyond spec 03: the fuzzy path
-    (``partial_ratio >= threshold``) additionally requires
+    Deliberate hardening beyond spec 03. An exact normalized substring
+    passes, then an exact substring after :func:`canonicalize_numbers` on
+    both sides. Otherwise the fuzzy path (``partial_ratio >= threshold``
+    on the canonicalized texts) additionally requires
     :func:`_fuzzy_window_supports` on the best-aligned page window found by
     ``rapidfuzz.fuzz.partial_ratio_alignment`` (widened to word bounds).
-    An exact normalized substring always passes.
     """
     norm_quote = normalize_for_grounding(quote)
     norm_page = normalize_for_grounding(page_text)
@@ -341,14 +506,18 @@ def _quote_on_page(quote: str, page_text: str, threshold: float) -> tuple[bool, 
         return False, 0.0
     if norm_quote in norm_page:
         return True, 100.0
-    alignment = fuzz.partial_ratio_alignment(norm_quote, norm_page)
+    canon_quote = canonicalize_numbers(norm_quote)
+    canon_page = canonicalize_numbers(norm_page)
+    if canon_quote in canon_page:
+        return True, 100.0
+    alignment = fuzz.partial_ratio_alignment(canon_quote, canon_page)
     if alignment is None:
         return False, 0.0
     score = float(alignment.score)
     if score < threshold:
         return False, score
-    window = _expand_to_word_bounds(norm_page, alignment.dest_start, alignment.dest_end)
-    return _fuzzy_window_supports(norm_quote, window, score), score
+    window = _expand_to_word_bounds(canon_page, alignment.dest_start, alignment.dest_end)
+    return _fuzzy_window_supports(canon_quote, window, score), score
 
 
 def _check_evidence(
@@ -503,7 +672,8 @@ def verify_grounding(
     A failure sets ``grounding_verified=False``, caps the confidence at
     0.40 and flags the parent field for review. Amendment events have no
     review flag of their own, so a failing event flags the contract fields
-    it drives: ``REVOCATION`` and ``GRANT_OF_POWERS`` flag
+    it drives (each ``revoked_appointment_evidence`` entry of an event is
+    grounded too and a failure flags ``representantes_legales``): ``REVOCATION`` and ``GRANT_OF_POWERS`` flag
     ``representantes_legales`` and ``poderes``; ``CAPITAL_INCREASE`` flags
     ``capital_social_actual``. Fields with status ``no_encontrado`` /
     ``no_aplicable`` and no evidence are skipped; an ``extraido`` field
@@ -549,6 +719,18 @@ def verify_grounding(
                 f"amendment_history[{index}] ({event.event_type.value}): quote "
                 f"'{_shorten(event.evidence.source_quote)}' not found ({detail})"
             )
+        for sub_index, appointment in enumerate(event.revoked_appointment_evidence):
+            checked += 1
+            passed, detail = _check_evidence(appointment, page_texts, threshold)
+            if not passed:
+                model.representantes_legales.flag_for_review(
+                    f"Grounding check failed for revoked appointment evidence of {event.event_type.value} "
+                    f"event of deed {event.numero_escritura}: quote not found on specified page"
+                )
+                failures.append(
+                    f"amendment_history[{index}].revoked_appointment_evidence[{sub_index}]: quote "
+                    f"'{_shorten(appointment.source_quote)}' not found ({detail})"
+                )
     log_event(
         _LOGGER,
         tag=StatusTag.WARN if failures else StatusTag.OK,
@@ -810,8 +992,205 @@ def verify_temporal_consistency(model: DeedModel, *, job_id: str = "-", doc_sha2
     return issues
 
 
-def _number_in_quote(number: int, norm_quote: str, tokens: list[str]) -> bool:
-    """Check whether an integer appears in a quote as digits or Spanish words.
+def _parse_number_at(tokens: list[str], start: int) -> tuple[int, int]:
+    """Parse the longest Spanish cardinal number starting at a token.
+
+    Parameters
+    ----------
+    tokens : list of str
+        Uppercase, accent-free tokens (punctuation tokens break numbers).
+    start : int
+        Index of the first token.
+
+    Returns
+    -------
+    tuple of (int, int)
+        Parsed value and number of tokens consumed (0 when no number
+        starts at ``start``).
+
+    Notes
+    -----
+    Each group below one thousand follows the order hundreds, tens,
+    ``Y``, units (``"CIENTO TREINTA Y UNO"``, ``"DIEZ Y SEIS"``); ``MIL``
+    and ``MILLON`` / ``MILLONES`` close a group. An out-of-order token ends
+    the number.
+    """
+    if tokens[start] == "CERO":
+        return 0, 1
+    total = 0
+    group = 0
+    stage = _STAGE_START
+    thousands_seen = False
+    millions_seen = False
+    last_value = 0
+    consumed = 0
+    index = start
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "Y":
+            if stage == _STAGE_TENS and index + 1 < len(tokens) and tokens[index + 1] in _WORD_UNITS:
+                stage = _STAGE_AFTER_Y
+                index += 1
+                continue
+            break
+        if token in _WORD_UNITS:
+            if stage not in (_STAGE_START, _STAGE_HUNDREDS, _STAGE_AFTER_Y):
+                break
+            group += _WORD_UNITS[token]
+            stage = _STAGE_DONE
+        elif token in _WORD_TEENS:
+            if stage not in (_STAGE_START, _STAGE_HUNDREDS):
+                break
+            group += _WORD_TEENS[token]
+            stage = _STAGE_DONE
+        elif token in _WORD_TENS:
+            if stage not in (_STAGE_START, _STAGE_HUNDREDS):
+                break
+            group += _WORD_TENS[token]
+            stage = _STAGE_TENS
+        elif token in _WORD_HUNDREDS:
+            if stage != _STAGE_START or group:
+                break
+            group += _WORD_HUNDREDS[token]
+            stage = _STAGE_HUNDREDS
+        elif token == "MIL":
+            if thousands_seen:
+                break
+            total += (group or 1) * 1_000
+            group = 0
+            stage = _STAGE_START
+            thousands_seen = True
+        elif token in ("MILLON", "MILLONES"):
+            if millions_seen or thousands_seen or not group:
+                break
+            total += group * 1_000_000
+            group = 0
+            stage = _STAGE_START
+            millions_seen = True
+        else:
+            break
+        index += 1
+        last_value = total + group
+        consumed = index - start
+    return last_value, consumed
+
+
+def spanish_numbers_in_text(text: str) -> list[int]:
+    """Return every Spanish cardinal number written in words in a text.
+
+    Parameters
+    ----------
+    text : str
+        Any text; it is normalized with :func:`normalize_for_grounding`.
+
+    Returns
+    -------
+    list of int
+        Values in ``[0, 999,999,999]`` in order of appearance
+        (``"DOS MIL VEINTIUNO"`` -> ``[2021]``, ``"TREINTA MIL CIEN"`` ->
+        ``[30100]``, ``"UN MILLON DE PESOS"`` -> ``[1000000]``).
+
+    Notes
+    -----
+    Supports ``UN`` / ``UNO`` / ``UNA``, ``VEINTIUNO`` .. ``VEINTINUEVE``,
+    ``"DIEZ Y SEIS"`` style teens, ``"TREINTA Y UNO"``, ``MIL`` and
+    ``MILLON`` / ``MILLONES``. Punctuation and digits break numbers.
+    """
+    tokens = _NUMBER_WORD_TOKEN_RE.findall(normalize_for_grounding(text))
+    values: list[int] = []
+    index = 0
+    while index < len(tokens):
+        value, consumed = _parse_number_at(tokens, index)
+        if consumed:
+            values.append(value)
+            index += consumed
+        else:
+            index += 1
+    return values
+
+
+def spanish_words_to_int(phrase: str) -> Optional[int]:
+    """Parse a phrase that is exactly one Spanish cardinal number.
+
+    Parameters
+    ----------
+    phrase : str
+        Phrase such as ``"CUARENTA Y CINCO MIL CIENTO VEINTE"``.
+
+    Returns
+    -------
+    int or None
+        The value, or ``None`` when the phrase is not one complete number.
+    """
+    tokens = _NUMBER_WORD_TOKEN_RE.findall(normalize_for_grounding(phrase))
+    if not tokens:
+        return None
+    value, consumed = _parse_number_at(tokens, 0)
+    return value if consumed == len(tokens) else None
+
+
+def spanish_ordinals_in_text(text: str) -> list[int]:
+    """Return the Spanish ordinal numbers (1 to 39) written in a text.
+
+    Parameters
+    ----------
+    text : str
+        Any text.
+
+    Returns
+    -------
+    list of int
+        Values such as ``"PRIMERO"`` -> 1, ``"DECIMO QUINTO"`` -> 15,
+        ``"DECIMOQUINTA"`` -> 15, ``"VIGESIMO"`` -> 20, ``"UNDECIMO"`` -> 11.
+    """
+    tokens = _NUMBER_WORD_TOKEN_RE.findall(normalize_for_grounding(text))
+    values: list[int] = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        compact = _COMPACT_ORDINAL_RE.match(token)
+        if token in _ORDINAL_TENS:
+            value = _ORDINAL_TENS[token]
+            if index + 1 < len(tokens) and tokens[index + 1] in _ORDINAL_UNITS:
+                value += _ORDINAL_UNITS[tokens[index + 1]]
+                index += 1
+            values.append(value)
+        elif compact is not None and compact.group(2) in _ORDINAL_UNITS:
+            values.append(_ORDINAL_TENS[f"{compact.group(1)}O"] + _ORDINAL_UNITS[compact.group(2)])
+        elif token in _ORDINAL_SPECIAL:
+            values.append(_ORDINAL_SPECIAL[token])
+        elif token in _ORDINAL_UNITS:
+            values.append(_ORDINAL_UNITS[token])
+        index += 1
+    return values
+
+
+def _grouped_integers(norm_quote: str) -> list[int]:
+    """Return the integer parts of the numbers of a quote.
+
+    Parameters
+    ----------
+    norm_quote : str
+        Normalized quote.
+
+    Returns
+    -------
+    list of int
+        Integer part of every number, accepting comma, period, apostrophe
+        or space thousands separators and a 1-2 digit decimal part
+        (``"$1'000,000.00"`` and ``"$1 000 000.00"`` -> ``1000000``,
+        ``"30 100"`` -> ``30100``).
+    """
+    values: list[int] = []
+    for token in _AMOUNT_RE.findall(norm_quote):
+        integer = re.sub(r"[^\d]", "", _AMOUNT_CENTS_RE.sub("", token))
+        if integer:
+            values.append(int(integer))
+    return values
+
+
+def _number_in_quote(number: int, norm_quote: str, tokens: list[str], *, ordinals: bool = False) -> bool:
+    """Check whether an integer appears in a quote as digits, words or an ordinal.
 
     Parameters
     ----------
@@ -821,21 +1200,24 @@ def _number_in_quote(number: int, norm_quote: str, tokens: list[str]) -> bool:
         Normalized quote.
     tokens : list of str
         Digit groups of the quote (:func:`digit_tokens`).
+    ordinals : bool, default False
+        Whether Spanish ordinals (``"DECIMO QUINTO"``) also count.
 
     Returns
     -------
     bool
         ``True`` when a digit group equals the number (leading zeros
-        ignored) or its Spanish words occur as a whole phrase.
+        ignored), the number is written in Spanish words, or, with
+        ``ordinals``, written as a Spanish ordinal. ``"PRIMERO"`` always
+        counts for 1 (``"primero de mayo"``).
     """
     if any(int(token) == number for token in tokens):
         return True
-    try:
-        words = spanish_amount_to_words(float(number))
-    except ValueError:
-        return False
-    variants = [words, "PRIMERO"] if number == 1 else [words]
-    return any(re.search(rf"\b{re.escape(variant)}\b", norm_quote) for variant in variants)
+    if number in spanish_numbers_in_text(norm_quote):
+        return True
+    if ordinals:
+        return number in spanish_ordinals_in_text(norm_quote)
+    return number == 1 and re.search(r"\bPRIMERO\b", norm_quote) is not None
 
 
 def _date_supported(value: str, norm_quote: str, tokens: list[str]) -> bool:
@@ -853,13 +1235,21 @@ def _date_supported(value: str, norm_quote: str, tokens: list[str]) -> bool:
     Returns
     -------
     bool
-        ``True`` when the year, the day and the month (Spanish month name
-        or month number) all appear in the quote; the year and day may be
-        written in digits or words.
+        ``True`` when a numeric date (``10.05.2019``, ``10/05/2019``,
+        ``10-05-2019`` or ``2019-05-10``) equals the value, or when the
+        year, the day and the month (Spanish month name or month number)
+        all appear in the quote; the year and day may be written in digits,
+        words or (day) ordinals.
     """
     parsed = _parse_iso_date(value)
     if parsed is None:
         return False
+    for day, month, year in _NUMERIC_DATE_RE.findall(norm_quote):
+        if (int(year), int(month), int(day)) == (parsed.year, parsed.month, parsed.day):
+            return True
+    for year, month, day in _ISO_DATE_RE.findall(norm_quote):
+        if (int(year), int(month), int(day)) == (parsed.year, parsed.month, parsed.day):
+            return True
     month_ok = (
         re.search(rf"\b{_SPANISH_MONTHS[parsed.month - 1]}\b", norm_quote) is not None
         or (parsed.month == 9 and re.search(r"\bSETIEMBRE\b", norm_quote) is not None)
@@ -868,7 +1258,7 @@ def _date_supported(value: str, norm_quote: str, tokens: list[str]) -> bool:
     return (
         month_ok
         and _number_in_quote(parsed.year, norm_quote, tokens)
-        and _number_in_quote(parsed.day, norm_quote, tokens)
+        and _number_in_quote(parsed.day, norm_quote, tokens, ordinals=True)
     )
 
 
@@ -882,21 +1272,52 @@ def _amount_supported(amount: float, tokens: list[str], norm_quote: str) -> bool
     tokens : list of str
         Digit groups of the quote (separators removed).
     norm_quote : str
-        Normalized quote (used to drop cents from digit groups).
+        Normalized quote.
 
     Returns
     -------
     bool
-        ``True`` when a number in the quote has the same integer part,
-        e.g. ``1000000.0`` against ``"$1,000,000.00"`` or ``"1000000"``.
+        ``True`` when a number in the quote has the same integer part
+        (``"$1,000,000.00"``, ``"1000000"``, ``"$1'000,000.00"``,
+        ``"$1 000 000.00"``, ``"$1.000.000,00"``) or the amount is written
+        in Spanish words (``"UN MILLON DE PESOS"``).
     """
-    expected = str(int(round(amount, 2)))
-    if expected in tokens:
+    expected = int(round(amount, 2))
+    if str(expected) in tokens:
         return True
-    integer_parts = [
-        re.sub(r"[.,]", "", _CENTS_SUFFIX_RE.sub("", token)) for token in _DIGIT_TOKEN_RE.findall(norm_quote)
-    ]
-    return expected in integer_parts
+    if expected in _grouped_integers(norm_quote):
+        return True
+    return expected in spanish_numbers_in_text(norm_quote)
+
+
+def _deed_number_supported(value: str, norm_quote: str, tokens: list[str]) -> bool:
+    """Check that a deed number is supported by its quote.
+
+    Parameters
+    ----------
+    value : str
+        Deed number as extracted (``"30,100"``).
+    norm_quote : str
+        Normalized quote.
+    tokens : list of str
+        Digit groups of the quote.
+
+    Returns
+    -------
+    bool
+        ``True`` when every digit group of the value occurs among the digit
+        groups of the quote, or when the value is a single number that
+        occurs with any thousands separator (``"30 100"``) or in Spanish
+        words (``"TREINTA MIL CIEN"``).
+    """
+    value_tokens = Counter(digit_tokens(value))
+    if value_tokens and not value_tokens - Counter(tokens):
+        return True
+    stripped = value.strip()
+    if not stripped or _DEED_VALUE_RE.fullmatch(stripped) is None:
+        return False
+    number = int(re.sub(r"[^\d]", "", stripped))
+    return number in _grouped_integers(norm_quote) or number in spanish_numbers_in_text(norm_quote)
 
 
 def verify_value_in_quote(model: DeedModel, *, job_id: str = "-", doc_sha256: str = "-") -> list[str]:
@@ -921,12 +1342,14 @@ def verify_value_in_quote(model: DeedModel, *, job_id: str = "-", doc_sha256: st
     Deliberate hardening beyond spec 03: grounding proves the quote is on
     the page, this check proves the value is in the quote.
 
-    - ``numero_escritura``: every digit group of the value occurs among
-      the digit groups of the quote (separators ignored).
-    - ``fecha_constitucion``: year, day and month occur in the quote.
-    - ``notario``: ``numero_notaria`` occurs as digits or Spanish words.
+    - ``numero_escritura``: digits (any thousands separator) or Spanish
+      words (:func:`_deed_number_supported`).
+    - ``fecha_constitucion``: a numeric date or year, day and month in
+      digits or words (:func:`_date_supported`).
+    - ``notario``: ``numero_notaria`` as digits, Spanish words or an
+      ordinal (``"DECIMO QUINTO"``).
     - ``capital_social_actual``: the integer part of ``monto_numerico``
-      occurs as a number (``1,000,000.00`` or ``1000000``).
+      as a number with any thousands separator or in Spanish words.
 
     Only fields with status ``extraido``, a value and evidence are
     checked. Failures are flagged with :data:`VALUE_NOT_IN_QUOTE_REASON`.
@@ -940,12 +1363,11 @@ def verify_value_in_quote(model: DeedModel, *, job_id: str = "-", doc_sha256: st
         norm_quote = normalize_for_grounding(field.evidence.source_quote)
         tokens = digit_tokens(norm_quote)
         if name == "numero_escritura":
-            value_tokens = Counter(digit_tokens(str(field.value)))
-            supported = bool(value_tokens) and not value_tokens - Counter(tokens)
+            supported = _deed_number_supported(str(field.value), norm_quote, tokens)
         elif name == "fecha_constitucion":
             supported = _date_supported(str(field.value), norm_quote, tokens)
         elif name == "notario":
-            supported = _number_in_quote(int(field.value.numero_notaria), norm_quote, tokens)
+            supported = _number_in_quote(int(field.value.numero_notaria), norm_quote, tokens, ordinals=True)
         else:
             supported = _amount_supported(float(field.value.monto_numerico), tokens, norm_quote)
         checks.append((name, supported))
@@ -1049,15 +1471,21 @@ __all__ = [
     "GROUNDING_FAILURE_REASON",
     "LIST_FIELDS",
     "MISSING_EVIDENCE_REASON",
+    "GROUNDING_STOPWORDS",
     "MIN_CHECKED_WORD_LENGTH",
+    "MIN_SUBSTITUTION_WORD_LENGTH",
     "SCALAR_FIELDS",
     "STRICT_FUZZY_SCORE",
     "TEMPORAL_INCONSISTENCY_REASON",
     "VALUE_NOT_IN_QUOTE_REASON",
     "apply_confidence_routing",
+    "canonicalize_numbers",
     "digit_tokens",
     "normalize_for_grounding",
     "spanish_amount_to_words",
+    "spanish_numbers_in_text",
+    "spanish_ordinals_in_text",
+    "spanish_words_to_int",
     "verify_capital_consistency",
     "verify_grounding",
     "verify_temporal_consistency",
