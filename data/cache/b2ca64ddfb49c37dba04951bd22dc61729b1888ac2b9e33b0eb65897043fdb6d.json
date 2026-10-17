@@ -1,0 +1,375 @@
+{
+  "doc_sha256": "b2ca64ddfb49c37dba04951bd22dc61729b1888ac2b9e33b0eb65897043fdb6d",
+  "document_filename": "acta_b.pdf",
+  "acta_id": "acta_b",
+  "document_type": "acta_constitutiva",
+  "model_version": "pre-verified-cache-v1",
+  "raw_extraction": {
+    "razon_social": {
+      "value": "COMERCIALIZADORA INDUSTRIAL DEL NORTE, S. DE R.L. DE C.V.",
+      "status": "extraido",
+      "evidence": {
+        "page_number": 1,
+        "source_quote": "adoptara la denominacion de \"COMERCIALIZADORA INDUSTRIAL DEL NORTE, S. DE R.L. DE C.V.\"",
+        "confidence_score": 1.0,
+        "confidence_source": "native_pdf",
+        "grounding_verified": false,
+        "bounding_box": null
+      },
+      "requires_human_review": false,
+      "review_reason": null
+    },
+    "fecha_constitucion": {
+      "value": "2020-07-22",
+      "status": "extraido",
+      "evidence": {
+        "page_number": 1,
+        "source_quote": "En la Ciudad de Monterrey, Estado de Nuevo Leon, a 22 de julio de 2020",
+        "confidence_score": 1.0,
+        "confidence_source": "native_pdf",
+        "grounding_verified": false,
+        "bounding_box": null
+      },
+      "requires_human_review": false,
+      "review_reason": null
+    },
+    "numero_escritura": {
+      "value": "12,890",
+      "status": "extraido",
+      "evidence": {
+        "page_number": 1,
+        "source_quote": "ESCRITURA PUBLICA NUMERO 12,890 (DOCE MIL OCHOCIENTOS NOVENTA)",
+        "confidence_score": 1.0,
+        "confidence_source": "native_pdf",
+        "grounding_verified": false,
+        "bounding_box": null
+      },
+      "requires_human_review": false,
+      "review_reason": null
+    },
+    "notario": {
+      "value": {
+        "nombre": "FERNANDO GARZA TREVINO",
+        "numero_notaria": 42,
+        "entidad_federativa": "Nuevo Leon"
+      },
+      "status": "extraido",
+      "evidence": {
+        "page_number": 1,
+        "source_quote": "Licenciado FERNANDO GARZA TREVINO, Titular de la Notaria Publica Numero 42 del Primer Distrito Registral en el Estado de Nuevo Leon",
+        "confidence_score": 1.0,
+        "confidence_source": "native_pdf",
+        "grounding_verified": false,
+        "bounding_box": null
+      },
+      "requires_human_review": false,
+      "review_reason": null
+    },
+    "socios": {
+      "value": [
+        {
+          "nombre": "JORGE ALBERTO SALINAS MORA",
+          "rfc": null,
+          "acciones": 150,
+          "valor_aportacion": 150000.0,
+          "porcentaje": 60.0,
+          "evidence": {
+            "page_number": 2,
+            "source_quote": "JORGE ALBERTO SALINAS MORA (150 partes sociales, $150,000.00, 60.0%)",
+            "confidence_score": 0.94,
+            "confidence_source": "ocr_engine",
+            "grounding_verified": false,
+            "bounding_box": {
+              "x1": 72.0,
+              "y1": 480.0,
+              "x2": 540.0,
+              "y2": 545.0
+            }
+          }
+        },
+        {
+          "nombre": "PATRICIA EUGENIA LOZANO VELA",
+          "rfc": null,
+          "acciones": 100,
+          "valor_aportacion": 100000.0,
+          "porcentaje": 40.0,
+          "evidence": {
+            "page_number": 2,
+            "source_quote": "PATRICIA EUGENIA LOZANO VELA (100 partes sociales, $100,000.00, 40.0%)",
+            "confidence_score": 0.94,
+            "confidence_source": "ocr_engine",
+            "grounding_verified": false,
+            "bounding_box": {
+              "x1": 72.0,
+              "y1": 480.0,
+              "x2": 540.0,
+              "y2": 545.0
+            }
+          }
+        }
+      ],
+      "status": "extraido",
+      "evidence": {
+        "page_number": 2,
+        "source_quote": "JORGE ALBERTO SALINAS MORA (150 partes sociales, $150,000.00, 60.0%)",
+        "confidence_score": 0.94,
+        "confidence_source": "ocr_engine",
+        "grounding_verified": false,
+        "bounding_box": {
+          "x1": 72.0,
+          "y1": 480.0,
+          "x2": 540.0,
+          "y2": 545.0
+        }
+      },
+      "requires_human_review": false,
+      "review_reason": null
+    },
+    "representantes_legales": {
+      "value": [
+        {
+          "nombre": "JORGE ALBERTO SALINAS MORA",
+          "nombre_normalizado": "JORGE ALBERTO SALINAS MORA",
+          "cargo": "Gerente General",
+          "vigente": true,
+          "fecha_nombramiento": "2020-07-22",
+          "evidence": {
+            "page_number": 2,
+            "source_quote": "GERENTE GENERAL: JORGE ALBERTO SALINAS MORA",
+            "confidence_score": 0.95,
+            "confidence_source": "ocr_engine",
+            "grounding_verified": false,
+            "bounding_box": {
+              "x1": 72.0,
+              "y1": 565.0,
+              "x2": 540.0,
+              "y2": 615.0
+            }
+          }
+        }
+      ],
+      "status": "extraido",
+      "evidence": {
+        "page_number": 2,
+        "source_quote": "GERENTE GENERAL: JORGE ALBERTO SALINAS MORA",
+        "confidence_score": 0.95,
+        "confidence_source": "ocr_engine",
+        "grounding_verified": false,
+        "bounding_box": {
+          "x1": 72.0,
+          "y1": 565.0,
+          "x2": 540.0,
+          "y2": 615.0
+        }
+      },
+      "requires_human_review": false,
+      "review_reason": null
+    },
+    "poderes": {
+      "value": [
+        {
+          "otorgado_a": "JORGE ALBERTO SALINAS MORA",
+          "tipo_poder": "Poder General para Pleitos y Cobranzas",
+          "modalidad": "Individual",
+          "vigente": true,
+          "evidence": {
+            "page_number": 2,
+            "source_quote": "GERENTE GENERAL: JORGE ALBERTO SALINAS MORA con PODER GENERAL PARA PLEITOS Y COBRANZAS Y ACTOS DE ADMINISTRACION (Individual)",
+            "confidence_score": 0.95,
+            "confidence_source": "ocr_engine",
+            "grounding_verified": false,
+            "bounding_box": {
+              "x1": 72.0,
+              "y1": 565.0,
+              "x2": 540.0,
+              "y2": 615.0
+            }
+          }
+        },
+        {
+          "otorgado_a": "JORGE ALBERTO SALINAS MORA",
+          "tipo_poder": "Poder General para Actos de Administración",
+          "modalidad": "Individual",
+          "vigente": true,
+          "evidence": {
+            "page_number": 2,
+            "source_quote": "GERENTE GENERAL: JORGE ALBERTO SALINAS MORA con PODER GENERAL PARA PLEITOS Y COBRANZAS Y ACTOS DE ADMINISTRACION (Individual)",
+            "confidence_score": 0.95,
+            "confidence_source": "ocr_engine",
+            "grounding_verified": false,
+            "bounding_box": {
+              "x1": 72.0,
+              "y1": 565.0,
+              "x2": 540.0,
+              "y2": 615.0
+            }
+          }
+        }
+      ],
+      "status": "extraido",
+      "evidence": {
+        "page_number": 2,
+        "source_quote": "GERENTE GENERAL: JORGE ALBERTO SALINAS MORA con PODER GENERAL PARA PLEITOS Y COBRANZAS Y ACTOS DE ADMINISTRACION (Individual)",
+        "confidence_score": 0.95,
+        "confidence_source": "ocr_engine",
+        "grounding_verified": false,
+        "bounding_box": {
+          "x1": 72.0,
+          "y1": 565.0,
+          "x2": 540.0,
+          "y2": 615.0
+        }
+      },
+      "requires_human_review": false,
+      "review_reason": null
+    },
+    "capital_social_actual": {
+      "value": {
+        "monto_numerico": 250000.0,
+        "moneda": "MXN",
+        "monto_en_letra": "DOSCIENTOS CINCUENTA MIL PESOS 00/100 M.N.",
+        "fecha_acto_vigente": "2020-07-22",
+        "escritura_origen": "12,890"
+      },
+      "status": "extraido",
+      "evidence": {
+        "page_number": 2,
+        "source_quote": "QUINTA.- El capital social es de $250,000.00 (DOSCIENTOS CINCUENTA MIL PESOS 00/100 M.N.).",
+        "confidence_score": 0.72,
+        "confidence_source": "ocr_engine",
+        "grounding_verified": false,
+        "bounding_box": {
+          "x1": 72.0,
+          "y1": 410.0,
+          "x2": 520.0,
+          "y2": 455.0
+        }
+      },
+      "requires_human_review": false,
+      "review_reason": null
+    },
+    "amendment_history": [
+      {
+        "event_type": "constitucion_original",
+        "fecha_acto": "2020-07-22",
+        "numero_escritura": "12,890",
+        "descripcion": "Original incorporation of COMERCIALIZADORA INDUSTRIAL DEL NORTE, S. DE R.L. DE C.V. before Notary Public 42 of Nuevo Leon.",
+        "sujeto_afectado": null,
+        "monto_nuevo": 250000.0,
+        "matched_canonical_entity": null,
+        "fuzzy_match_score": null,
+        "evidence": {
+          "page_number": 1,
+          "source_quote": "ESCRITURA PUBLICA NUMERO 12,890 (DOCE MIL OCHOCIENTOS NOVENTA)",
+          "confidence_score": 1.0,
+          "confidence_source": "native_pdf",
+          "grounding_verified": false,
+          "bounding_box": null
+        }
+      }
+    ]
+  },
+  "ocr_pages": {
+    "2": {
+      "page_number": 2,
+      "text": "HOJA DOS (2) - CONTINUACION DE LOS ESTATUTOS SOCIALES\ncomercializacion de toda clase de productos industriales, maquinaria y refacciones, asi como la celebracion de todos los actos y contratos permitidos por la ley.\nCLAUSULA TERCERA.- DURACION: La duracion de la sociedad sera indefinida.\nCLAUSULA CUARTA.- DOMICILIO: El domicilio social sera la Ciudad de Monterrey, Nuevo Leon, sin perjuicio de establecer sucursales en otros lugares.\nLos socios fundadores convienen que el capital social quedara integrado conforme a la clausula siguiente.\nQUINTA.- El capital social es de $250,000.00 (DOSCIENTOS CINCUENTA MIL PESOS 00/100 M.N.).\nCLAUSULA SEXTA.- PARTES SOCIALES: JORGE ALBERTO SALINAS MORA (150 partes sociales, $150,000.00, 60.0%) y PATRICIA EUGENIA LOZANO VELA (100 partes sociales, $100,000.00, 40.0%).\nCLAUSULA SEPTIMA.- ADMINISTRACION: GERENTE GENERAL: JORGE ALBERTO SALINAS MORA con PODER GENERAL PARA PLEITOS Y COBRANZAS Y ACTOS DE ADMINISTRACION (Individual).",
+      "mean_confidence": 0.9125,
+      "regions": [
+        {
+          "text": "HOJA DOS (2) - CONTINUACION DE LOS ESTATUTOS SOCIALES",
+          "bbox": {
+            "x1": 72.0,
+            "y1": 72.0,
+            "x2": 540.0,
+            "y2": 100.0
+          },
+          "confidence": 0.95
+        },
+        {
+          "text": "comercializacion de toda clase de productos industriales, maquinaria y refacciones, asi como la celebracion de todos los actos y contratos permitidos por la ley.",
+          "bbox": {
+            "x1": 72.0,
+            "y1": 120.0,
+            "x2": 540.0,
+            "y2": 175.0
+          },
+          "confidence": 0.93
+        },
+        {
+          "text": "CLAUSULA TERCERA.- DURACION: La duracion de la sociedad sera indefinida.",
+          "bbox": {
+            "x1": 72.0,
+            "y1": 195.0,
+            "x2": 540.0,
+            "y2": 230.0
+          },
+          "confidence": 0.94
+        },
+        {
+          "text": "CLAUSULA CUARTA.- DOMICILIO: El domicilio social sera la Ciudad de Monterrey, Nuevo Leon, sin perjuicio de establecer sucursales en otros lugares.",
+          "bbox": {
+            "x1": 72.0,
+            "y1": 250.0,
+            "x2": 540.0,
+            "y2": 305.0
+          },
+          "confidence": 0.94
+        },
+        {
+          "text": "Los socios fundadores convienen que el capital social quedara integrado conforme a la clausula siguiente.",
+          "bbox": {
+            "x1": 72.0,
+            "y1": 330.0,
+            "x2": 540.0,
+            "y2": 385.0
+          },
+          "confidence": 0.93
+        },
+        {
+          "text": "QUINTA.- El capital social es de $250,000.00 (DOSCIENTOS CINCUENTA MIL PESOS 00/100 M.N.).",
+          "bbox": {
+            "x1": 72.0,
+            "y1": 410.0,
+            "x2": 520.0,
+            "y2": 455.0
+          },
+          "confidence": 0.72
+        },
+        {
+          "text": "CLAUSULA SEXTA.- PARTES SOCIALES: JORGE ALBERTO SALINAS MORA (150 partes sociales, $150,000.00, 60.0%) y PATRICIA EUGENIA LOZANO VELA (100 partes sociales, $100,000.00, 40.0%).",
+          "bbox": {
+            "x1": 72.0,
+            "y1": 480.0,
+            "x2": 540.0,
+            "y2": 545.0
+          },
+          "confidence": 0.94
+        },
+        {
+          "text": "CLAUSULA SEPTIMA.- ADMINISTRACION: GERENTE GENERAL: JORGE ALBERTO SALINAS MORA con PODER GENERAL PARA PLEITOS Y COBRANZAS Y ACTOS DE ADMINISTRACION (Individual).",
+          "bbox": {
+            "x1": 72.0,
+            "y1": 565.0,
+            "x2": 540.0,
+            "y2": 615.0
+          },
+          "confidence": 0.95
+        }
+      ],
+      "engine": "deterministic-ocr-v1"
+    }
+  },
+  "verifier_responses": [
+    {
+      "page_number": 2,
+      "bbox": [
+        72.0,
+        410.0,
+        520.0,
+        455.0
+      ],
+      "predicate": "The capital social amount on page 2 equals $250,000.00 MXN",
+      "probability": 0.78
+    }
+  ]
+}

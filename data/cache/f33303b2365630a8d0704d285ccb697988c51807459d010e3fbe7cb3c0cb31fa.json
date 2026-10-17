@@ -1,0 +1,397 @@
+{
+  "doc_sha256": "f33303b2365630a8d0704d285ccb697988c51807459d010e3fbe7cb3c0cb31fa",
+  "document_filename": "acta_c.pdf",
+  "acta_id": "acta_c",
+  "document_type": "acta_constitutiva",
+  "model_version": "pre-verified-cache-v1",
+  "raw_extraction": {
+    "razon_social": {
+      "value": "LOGISTICA TRANSCONTINENTAL DEL PACIFICO, S.A. DE C.V.",
+      "status": "extraido",
+      "evidence": {
+        "page_number": 1,
+        "source_quote": "se constituye \"LOGISTICA TRANSCONTINENTAL DEL PACIFICO, S.A. DE C.V.\"",
+        "confidence_score": 1.0,
+        "confidence_source": "native_pdf",
+        "grounding_verified": false,
+        "bounding_box": null
+      },
+      "requires_human_review": false,
+      "review_reason": null
+    },
+    "fecha_constitucion": {
+      "value": "2019-05-10",
+      "status": "extraido",
+      "evidence": {
+        "page_number": 1,
+        "source_quote": "En la Ciudad de Guadalajara, Jalisco, a 10 de mayo de 2019",
+        "confidence_score": 1.0,
+        "confidence_source": "native_pdf",
+        "grounding_verified": false,
+        "bounding_box": null
+      },
+      "requires_human_review": false,
+      "review_reason": null
+    },
+    "numero_escritura": {
+      "value": "30,100",
+      "status": "extraido",
+      "evidence": {
+        "page_number": 1,
+        "source_quote": "ESCRITURA PUBLICA NUMERO 30,100 (TREINTA MIL CIEN)",
+        "confidence_score": 1.0,
+        "confidence_source": "native_pdf",
+        "grounding_verified": false,
+        "bounding_box": null
+      },
+      "requires_human_review": false,
+      "review_reason": null
+    },
+    "notario": {
+      "value": {
+        "nombre": "ARTURO VILLASEÑOR ORTIZ",
+        "numero_notaria": 15,
+        "entidad_federativa": "Jalisco"
+      },
+      "status": "extraido",
+      "evidence": {
+        "page_number": 1,
+        "source_quote": "ante el Licenciado ARTURO VILLASEÑOR ORTIZ, Notario Publico Numero 15 de Guadalajara, Jalisco",
+        "confidence_score": 1.0,
+        "confidence_source": "native_pdf",
+        "grounding_verified": false,
+        "bounding_box": null
+      },
+      "requires_human_review": false,
+      "review_reason": null
+    },
+    "socios": {
+      "value": [
+        {
+          "nombre": "GRUPO INVERSIONISTA DEL OCCIDENTE, S.A. DE C.V.",
+          "rfc": null,
+          "acciones": 800,
+          "valor_aportacion": 80000.0,
+          "porcentaje": 80.0,
+          "evidence": {
+            "page_number": 1,
+            "source_quote": "GRUPO INVERSIONISTA DEL OCCIDENTE, S.A. DE C.V. (800 acciones, $80,000.00, 80.0%)",
+            "confidence_score": 1.0,
+            "confidence_source": "native_pdf",
+            "grounding_verified": false,
+            "bounding_box": null
+          }
+        },
+        {
+          "nombre": "MARIA ELENA TORRES VEGA",
+          "rfc": null,
+          "acciones": 200,
+          "valor_aportacion": 20000.0,
+          "porcentaje": 20.0,
+          "evidence": {
+            "page_number": 1,
+            "source_quote": "MARIA ELENA TORRES VEGA (200 acciones, $20,000.00, 20.0%)",
+            "confidence_score": 1.0,
+            "confidence_source": "native_pdf",
+            "grounding_verified": false,
+            "bounding_box": null
+          }
+        }
+      ],
+      "status": "extraido",
+      "evidence": {
+        "page_number": 1,
+        "source_quote": "GRUPO INVERSIONISTA DEL OCCIDENTE, S.A. DE C.V. (800 acciones, $80,000.00, 80.0%)",
+        "confidence_score": 1.0,
+        "confidence_source": "native_pdf",
+        "grounding_verified": false,
+        "bounding_box": null
+      },
+      "requires_human_review": false,
+      "review_reason": null
+    },
+    "representantes_legales": {
+      "value": [
+        {
+          "nombre": "LIC. JUAN CARLOS PÉREZ LÓPEZ",
+          "nombre_normalizado": "JUAN CARLOS PEREZ LOPEZ",
+          "cargo": "Administrador Unico",
+          "vigente": true,
+          "fecha_nombramiento": "2019-05-10",
+          "evidence": {
+            "page_number": 2,
+            "source_quote": "Se nombra como ADMINISTRADOR UNICO al LIC. JUAN CARLOS PÉREZ LÓPEZ",
+            "confidence_score": 1.0,
+            "confidence_source": "native_pdf",
+            "grounding_verified": false,
+            "bounding_box": null
+          }
+        },
+        {
+          "nombre": "MARIA ELENA TORRES VEGA",
+          "nombre_normalizado": "MARIA ELENA TORRES VEGA",
+          "cargo": "Apoderada Legal",
+          "vigente": true,
+          "fecha_nombramiento": "2019-05-10",
+          "evidence": {
+            "page_number": 2,
+            "source_quote": "Se nombra como APODERADA LEGAL a MARIA ELENA TORRES VEGA",
+            "confidence_score": 1.0,
+            "confidence_source": "native_pdf",
+            "grounding_verified": false,
+            "bounding_box": null
+          }
+        },
+        {
+          "nombre": "ING. ALEJANDRO GÓMEZ RUIZ",
+          "nombre_normalizado": "ALEJANDRO GOMEZ RUIZ",
+          "cargo": "Administrador Unico",
+          "vigente": true,
+          "fecha_nombramiento": "2024-08-20",
+          "evidence": {
+            "page_number": 4,
+            "source_quote": "Se designa como nuevo ADMINISTRADOR UNICO de la sociedad al ING. ALEJANDRO GÓMEZ RUIZ",
+            "confidence_score": 1.0,
+            "confidence_source": "native_pdf",
+            "grounding_verified": false,
+            "bounding_box": null
+          }
+        }
+      ],
+      "status": "extraido",
+      "evidence": {
+        "page_number": 2,
+        "source_quote": "Se nombra como ADMINISTRADOR UNICO al LIC. JUAN CARLOS PÉREZ LÓPEZ",
+        "confidence_score": 1.0,
+        "confidence_source": "native_pdf",
+        "grounding_verified": false,
+        "bounding_box": null
+      },
+      "requires_human_review": false,
+      "review_reason": null
+    },
+    "poderes": {
+      "value": [
+        {
+          "otorgado_a": "LIC. JUAN CARLOS PÉREZ LÓPEZ",
+          "tipo_poder": "Poder General para Pleitos y Cobranzas",
+          "modalidad": "Individual",
+          "vigente": true,
+          "evidence": {
+            "page_number": 2,
+            "source_quote": "ADMINISTRADOR UNICO al LIC. JUAN CARLOS PÉREZ LÓPEZ, otorgandole PODER GENERAL PARA PLEITOS Y COBRANZAS, ACTOS DE ADMINISTRACION Y ACTOS DE DOMINIO de forma INDIVIDUAL",
+            "confidence_score": 1.0,
+            "confidence_source": "native_pdf",
+            "grounding_verified": false,
+            "bounding_box": null
+          }
+        },
+        {
+          "otorgado_a": "LIC. JUAN CARLOS PÉREZ LÓPEZ",
+          "tipo_poder": "Poder General para Actos de Administración",
+          "modalidad": "Individual",
+          "vigente": true,
+          "evidence": {
+            "page_number": 2,
+            "source_quote": "ADMINISTRADOR UNICO al LIC. JUAN CARLOS PÉREZ LÓPEZ, otorgandole PODER GENERAL PARA PLEITOS Y COBRANZAS, ACTOS DE ADMINISTRACION Y ACTOS DE DOMINIO de forma INDIVIDUAL",
+            "confidence_score": 1.0,
+            "confidence_source": "native_pdf",
+            "grounding_verified": false,
+            "bounding_box": null
+          }
+        },
+        {
+          "otorgado_a": "LIC. JUAN CARLOS PÉREZ LÓPEZ",
+          "tipo_poder": "Poder General para Actos de Dominio",
+          "modalidad": "Individual",
+          "vigente": true,
+          "evidence": {
+            "page_number": 2,
+            "source_quote": "ADMINISTRADOR UNICO al LIC. JUAN CARLOS PÉREZ LÓPEZ, otorgandole PODER GENERAL PARA PLEITOS Y COBRANZAS, ACTOS DE ADMINISTRACION Y ACTOS DE DOMINIO de forma INDIVIDUAL",
+            "confidence_score": 1.0,
+            "confidence_source": "native_pdf",
+            "grounding_verified": false,
+            "bounding_box": null
+          }
+        },
+        {
+          "otorgado_a": "MARIA ELENA TORRES VEGA",
+          "tipo_poder": "Poder General para Pleitos y Cobranzas",
+          "modalidad": "Individual",
+          "vigente": true,
+          "evidence": {
+            "page_number": 2,
+            "source_quote": "APODERADA LEGAL a MARIA ELENA TORRES VEGA, otorgandole PODER GENERAL PARA PLEITOS Y COBRANZAS Y ACTOS DE ADMINISTRACION de forma INDIVIDUAL",
+            "confidence_score": 1.0,
+            "confidence_source": "native_pdf",
+            "grounding_verified": false,
+            "bounding_box": null
+          }
+        },
+        {
+          "otorgado_a": "MARIA ELENA TORRES VEGA",
+          "tipo_poder": "Poder General para Actos de Administración",
+          "modalidad": "Individual",
+          "vigente": true,
+          "evidence": {
+            "page_number": 2,
+            "source_quote": "APODERADA LEGAL a MARIA ELENA TORRES VEGA, otorgandole PODER GENERAL PARA PLEITOS Y COBRANZAS Y ACTOS DE ADMINISTRACION de forma INDIVIDUAL",
+            "confidence_score": 1.0,
+            "confidence_source": "native_pdf",
+            "grounding_verified": false,
+            "bounding_box": null
+          }
+        },
+        {
+          "otorgado_a": "ING. ALEJANDRO GÓMEZ RUIZ",
+          "tipo_poder": "Poder General para Pleitos y Cobranzas",
+          "modalidad": "Individual",
+          "vigente": true,
+          "evidence": {
+            "page_number": 4,
+            "source_quote": "al ING. ALEJANDRO GÓMEZ RUIZ, a quien se le confiere PODER GENERAL PARA PLEITOS Y COBRANZAS, ACTOS DE ADMINISTRACION Y ACTOS DE DOMINIO para ser ejercido de manera INDIVIDUAL",
+            "confidence_score": 1.0,
+            "confidence_source": "native_pdf",
+            "grounding_verified": false,
+            "bounding_box": null
+          }
+        },
+        {
+          "otorgado_a": "ING. ALEJANDRO GÓMEZ RUIZ",
+          "tipo_poder": "Poder General para Actos de Administración",
+          "modalidad": "Individual",
+          "vigente": true,
+          "evidence": {
+            "page_number": 4,
+            "source_quote": "al ING. ALEJANDRO GÓMEZ RUIZ, a quien se le confiere PODER GENERAL PARA PLEITOS Y COBRANZAS, ACTOS DE ADMINISTRACION Y ACTOS DE DOMINIO para ser ejercido de manera INDIVIDUAL",
+            "confidence_score": 1.0,
+            "confidence_source": "native_pdf",
+            "grounding_verified": false,
+            "bounding_box": null
+          }
+        },
+        {
+          "otorgado_a": "ING. ALEJANDRO GÓMEZ RUIZ",
+          "tipo_poder": "Poder General para Actos de Dominio",
+          "modalidad": "Individual",
+          "vigente": true,
+          "evidence": {
+            "page_number": 4,
+            "source_quote": "al ING. ALEJANDRO GÓMEZ RUIZ, a quien se le confiere PODER GENERAL PARA PLEITOS Y COBRANZAS, ACTOS DE ADMINISTRACION Y ACTOS DE DOMINIO para ser ejercido de manera INDIVIDUAL",
+            "confidence_score": 1.0,
+            "confidence_source": "native_pdf",
+            "grounding_verified": false,
+            "bounding_box": null
+          }
+        }
+      ],
+      "status": "extraido",
+      "evidence": {
+        "page_number": 2,
+        "source_quote": "ADMINISTRADOR UNICO al LIC. JUAN CARLOS PÉREZ LÓPEZ, otorgandole PODER GENERAL PARA PLEITOS Y COBRANZAS, ACTOS DE ADMINISTRACION Y ACTOS DE DOMINIO de forma INDIVIDUAL",
+        "confidence_score": 1.0,
+        "confidence_source": "native_pdf",
+        "grounding_verified": false,
+        "bounding_box": null
+      },
+      "requires_human_review": false,
+      "review_reason": null
+    },
+    "capital_social_actual": {
+      "value": {
+        "monto_numerico": 100000.0,
+        "moneda": "MXN",
+        "monto_en_letra": "CIEN MIL PESOS 00/100 MONEDA NACIONAL",
+        "fecha_acto_vigente": "2019-05-10",
+        "escritura_origen": "30,100"
+      },
+      "status": "extraido",
+      "evidence": {
+        "page_number": 1,
+        "source_quote": "El capital social inicial se fija en la suma de $100,000.00 (CIEN MIL PESOS 00/100 MONEDA NACIONAL)",
+        "confidence_score": 1.0,
+        "confidence_source": "native_pdf",
+        "grounding_verified": false,
+        "bounding_box": null
+      },
+      "requires_human_review": false,
+      "review_reason": null
+    },
+    "amendment_history": [
+      {
+        "event_type": "constitucion_original",
+        "fecha_acto": "2019-05-10",
+        "numero_escritura": "30,100",
+        "descripcion": "Original incorporation of LOGISTICA TRANSCONTINENTAL DEL PACIFICO, S.A. DE C.V. with an initial capital of MXN 100,000.00.",
+        "sujeto_afectado": null,
+        "monto_nuevo": 100000.0,
+        "matched_canonical_entity": null,
+        "fuzzy_match_score": null,
+        "evidence": {
+          "page_number": 1,
+          "source_quote": "ESCRITURA PUBLICA NUMERO 30,100 (TREINTA MIL CIEN)",
+          "confidence_score": 1.0,
+          "confidence_source": "native_pdf",
+          "grounding_verified": false,
+          "bounding_box": null
+        }
+      },
+      {
+        "event_type": "aumento_capital",
+        "fecha_acto": "2024-08-20",
+        "numero_escritura": "58,400",
+        "descripcion": "Extraordinary general assembly increases the fixed capital from MXN 100,000.00 to MXN 1,000,000.00.",
+        "sujeto_afectado": null,
+        "monto_nuevo": 1000000.0,
+        "matched_canonical_entity": null,
+        "fuzzy_match_score": null,
+        "evidence": {
+          "page_number": 3,
+          "source_quote": "Se aprueba aumentar el capital social fijo de la suma de $100,000.00 M.N. para quedar fijado en la cantidad actual de $1,000,000.00 (UN MILLON DE PESOS 00/100 MONEDA NACIONAL)",
+          "confidence_score": 1.0,
+          "confidence_source": "native_pdf",
+          "grounding_verified": false,
+          "bounding_box": null
+        }
+      },
+      {
+        "event_type": "revocacion_poderes",
+        "fecha_acto": "2024-08-20",
+        "numero_escritura": "58,400",
+        "descripcion": "Revocation of the sole administrator appointment and of all general powers granted in deed 30,100.",
+        "sujeto_afectado": "SR. JUAN C. PEREZ LOPEZ",
+        "monto_nuevo": null,
+        "matched_canonical_entity": null,
+        "fuzzy_match_score": null,
+        "evidence": {
+          "page_number": 3,
+          "source_quote": "Se revoca en este acto el nombramiento de Administrador Unico, asi como todos y cada uno de los poderes generales para pleitos y cobranzas, actos de administracion y actos de dominio otorgados previamente en la escritura 30,100 a favor del SR. JUAN C. PEREZ LOPEZ",
+          "confidence_score": 1.0,
+          "confidence_source": "native_pdf",
+          "grounding_verified": false,
+          "bounding_box": null
+        }
+      },
+      {
+        "event_type": "otorgamiento_poderes",
+        "fecha_acto": "2024-08-20",
+        "numero_escritura": "58,400",
+        "descripcion": "Appointment of a new sole administrator with general powers for litigation, administration and ownership.",
+        "sujeto_afectado": "ING. ALEJANDRO GÓMEZ RUIZ",
+        "monto_nuevo": null,
+        "matched_canonical_entity": null,
+        "fuzzy_match_score": null,
+        "evidence": {
+          "page_number": 4,
+          "source_quote": "Se designa como nuevo ADMINISTRADOR UNICO de la sociedad al ING. ALEJANDRO GÓMEZ RUIZ, a quien se le confiere PODER GENERAL PARA PLEITOS Y COBRANZAS, ACTOS DE ADMINISTRACION Y ACTOS DE DOMINIO",
+          "confidence_score": 1.0,
+          "confidence_source": "native_pdf",
+          "grounding_verified": false,
+          "bounding_box": null
+        }
+      }
+    ]
+  },
+  "ocr_pages": {},
+  "verifier_responses": []
+}

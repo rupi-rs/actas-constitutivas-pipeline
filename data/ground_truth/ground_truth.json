@@ -1,0 +1,416 @@
+{
+  "acta_a": {
+    "acta_id": "acta_a",
+    "document_filename": "acta_a.pdf",
+    "doc_sha256": "822992832a9a659892b2e47ef53f0b8a01e64af1597355bfe86b8aa28f69c697",
+    "total_pages": 2,
+    "scenario": "Clean digital native incorporation deed (2 native pages).",
+    "native_pages": [
+      1,
+      2
+    ],
+    "scanned_pages": [],
+    "fields": {
+      "razon_social": {
+        "value": "TECNOLOGIA FINANCIERA DEL VALLE, S.A. DE C.V.",
+        "page": 1
+      },
+      "fecha_constitucion": {
+        "value": "2021-03-15",
+        "page": 1
+      },
+      "numero_escritura": {
+        "value": "45,120",
+        "page": 1
+      },
+      "notario": {
+        "value": {
+          "nombre": "ROBERTO MENDEZ LARA",
+          "numero_notaria": 88,
+          "entidad_federativa": "Ciudad de Mexico"
+        },
+        "page": 1
+      },
+      "socios": {
+        "value": [
+          {
+            "nombre": "CARLOS EDUARDO RAMIREZ SOTO",
+            "rfc": "RASC850412HM1",
+            "acciones": 300,
+            "porcentaje": 60.0,
+            "page": 2
+          },
+          {
+            "nombre": "SOFIA VALENTINA HERRERA CRUZ",
+            "rfc": "HECS901105MJ2",
+            "acciones": 200,
+            "porcentaje": 40.0,
+            "page": 2
+          }
+        ],
+        "page": 2
+      },
+      "representantes_legales": {
+        "value": [
+          {
+            "nombre": "CARLOS EDUARDO RAMIREZ SOTO",
+            "nombre_normalizado": "CARLOS EDUARDO RAMIREZ SOTO",
+            "cargo": "Administrador Unico",
+            "fecha_nombramiento": "2021-03-15",
+            "page": 2
+          },
+          {
+            "nombre": "SOFIA VALENTINA HERRERA CRUZ",
+            "nombre_normalizado": "SOFIA VALENTINA HERRERA CRUZ",
+            "cargo": "Apoderada General",
+            "fecha_nombramiento": "2021-03-15",
+            "page": 2
+          }
+        ],
+        "page": 2
+      },
+      "poderes": {
+        "value": [
+          {
+            "otorgado_a": "CARLOS EDUARDO RAMIREZ SOTO",
+            "tipo_poder": "Poder General para Pleitos y Cobranzas",
+            "modalidad": "Individual",
+            "page": 2
+          },
+          {
+            "otorgado_a": "CARLOS EDUARDO RAMIREZ SOTO",
+            "tipo_poder": "Poder General para Actos de Administración",
+            "modalidad": "Individual",
+            "page": 2
+          },
+          {
+            "otorgado_a": "CARLOS EDUARDO RAMIREZ SOTO",
+            "tipo_poder": "Poder General para Actos de Dominio",
+            "modalidad": "Individual",
+            "page": 2
+          },
+          {
+            "otorgado_a": "SOFIA VALENTINA HERRERA CRUZ",
+            "tipo_poder": "Poder General para Pleitos y Cobranzas",
+            "modalidad": "Individual",
+            "page": 2
+          },
+          {
+            "otorgado_a": "SOFIA VALENTINA HERRERA CRUZ",
+            "tipo_poder": "Poder General para Actos de Administración",
+            "modalidad": "Individual",
+            "page": 2
+          }
+        ],
+        "page": 2
+      },
+      "capital_social_actual": {
+        "value": {
+          "monto_numerico": 500000.0,
+          "moneda": "MXN",
+          "monto_en_letra": "QUINIENTOS MIL PESOS 00/100 MONEDA NACIONAL",
+          "fecha_acto_vigente": "2021-03-15",
+          "escritura_origen": "45,120"
+        },
+        "page": 1
+      }
+    },
+    "revoked_representatives": [],
+    "expected_human_review_fields": [],
+    "amendment_history": {
+      "event_count": 1,
+      "event_types": [
+        "constitucion_original"
+      ],
+      "events": [
+        {
+          "event_type": "constitucion_original",
+          "fecha_acto": "2021-03-15",
+          "numero_escritura": "45,120",
+          "page": 1,
+          "sujeto_afectado": null,
+          "monto_nuevo": 500000.0
+        }
+      ]
+    }
+  },
+  "acta_b": {
+    "acta_id": "acta_b",
+    "document_filename": "acta_b.pdf",
+    "doc_sha256": "b2ca64ddfb49c37dba04951bd22dc61729b1888ac2b9e33b0eb65897043fdb6d",
+    "total_pages": 2,
+    "scenario": "Hybrid deed: native page 1 and scanned page 2 with a notarial seal over the capital clause (OCR 0.72, verifier p=0.78).",
+    "native_pages": [
+      1
+    ],
+    "scanned_pages": [
+      2
+    ],
+    "fields": {
+      "razon_social": {
+        "value": "COMERCIALIZADORA INDUSTRIAL DEL NORTE, S. DE R.L. DE C.V.",
+        "page": 1
+      },
+      "fecha_constitucion": {
+        "value": "2020-07-22",
+        "page": 1
+      },
+      "numero_escritura": {
+        "value": "12,890",
+        "page": 1
+      },
+      "notario": {
+        "value": {
+          "nombre": "FERNANDO GARZA TREVINO",
+          "numero_notaria": 42,
+          "entidad_federativa": "Nuevo Leon"
+        },
+        "page": 1
+      },
+      "socios": {
+        "value": [
+          {
+            "nombre": "JORGE ALBERTO SALINAS MORA",
+            "rfc": null,
+            "acciones": 150,
+            "porcentaje": 60.0,
+            "page": 2
+          },
+          {
+            "nombre": "PATRICIA EUGENIA LOZANO VELA",
+            "rfc": null,
+            "acciones": 100,
+            "porcentaje": 40.0,
+            "page": 2
+          }
+        ],
+        "page": 2
+      },
+      "representantes_legales": {
+        "value": [
+          {
+            "nombre": "JORGE ALBERTO SALINAS MORA",
+            "nombre_normalizado": "JORGE ALBERTO SALINAS MORA",
+            "cargo": "Gerente General",
+            "fecha_nombramiento": "2020-07-22",
+            "page": 2
+          }
+        ],
+        "page": 2
+      },
+      "poderes": {
+        "value": [
+          {
+            "otorgado_a": "JORGE ALBERTO SALINAS MORA",
+            "tipo_poder": "Poder General para Pleitos y Cobranzas",
+            "modalidad": "Individual",
+            "page": 2
+          },
+          {
+            "otorgado_a": "JORGE ALBERTO SALINAS MORA",
+            "tipo_poder": "Poder General para Actos de Administración",
+            "modalidad": "Individual",
+            "page": 2
+          }
+        ],
+        "page": 2
+      },
+      "capital_social_actual": {
+        "value": {
+          "monto_numerico": 250000.0,
+          "moneda": "MXN",
+          "monto_en_letra": "DOSCIENTOS CINCUENTA MIL PESOS 00/100 M.N.",
+          "fecha_acto_vigente": "2020-07-22",
+          "escritura_origen": "12,890"
+        },
+        "page": 2
+      }
+    },
+    "revoked_representatives": [],
+    "expected_human_review_fields": [
+      "capital_social_actual"
+    ],
+    "amendment_history": {
+      "event_count": 1,
+      "event_types": [
+        "constitucion_original"
+      ],
+      "events": [
+        {
+          "event_type": "constitucion_original",
+          "fecha_acto": "2020-07-22",
+          "numero_escritura": "12,890",
+          "page": 1,
+          "sujeto_afectado": null,
+          "monto_nuevo": 250000.0
+        }
+      ]
+    }
+  },
+  "acta_c": {
+    "acta_id": "acta_c",
+    "document_filename": "acta_c.pdf",
+    "doc_sha256": "f33303b2365630a8d0704d285ccb697988c51807459d010e3fbe7cb3c0cb31fa",
+    "total_pages": 4,
+    "scenario": "Multi-act file: 2019 incorporation (pages 1-2) and 2024 extraordinary assembly protocolization (pages 3-4) with capital increase, revocation and new appointment.",
+    "native_pages": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "scanned_pages": [],
+    "fields": {
+      "razon_social": {
+        "value": "LOGISTICA TRANSCONTINENTAL DEL PACIFICO, S.A. DE C.V.",
+        "page": 1
+      },
+      "fecha_constitucion": {
+        "value": "2019-05-10",
+        "page": 1
+      },
+      "numero_escritura": {
+        "value": "30,100",
+        "page": 1
+      },
+      "notario": {
+        "value": {
+          "nombre": "ARTURO VILLASEÑOR ORTIZ",
+          "numero_notaria": 15,
+          "entidad_federativa": "Jalisco"
+        },
+        "page": 1
+      },
+      "socios": {
+        "value": [
+          {
+            "nombre": "GRUPO INVERSIONISTA DEL OCCIDENTE, S.A. DE C.V.",
+            "rfc": null,
+            "acciones": 800,
+            "porcentaje": 80.0,
+            "page": 1
+          },
+          {
+            "nombre": "MARIA ELENA TORRES VEGA",
+            "rfc": null,
+            "acciones": 200,
+            "porcentaje": 20.0,
+            "page": 1
+          }
+        ],
+        "page": 1
+      },
+      "representantes_legales": {
+        "value": [
+          {
+            "nombre": "MARIA ELENA TORRES VEGA",
+            "nombre_normalizado": "MARIA ELENA TORRES VEGA",
+            "cargo": "Apoderada Legal",
+            "fecha_nombramiento": "2019-05-10",
+            "page": 2
+          },
+          {
+            "nombre": "ING. ALEJANDRO GÓMEZ RUIZ",
+            "nombre_normalizado": "ALEJANDRO GOMEZ RUIZ",
+            "cargo": "Administrador Unico",
+            "fecha_nombramiento": "2024-08-20",
+            "page": 4
+          }
+        ],
+        "page": 2
+      },
+      "poderes": {
+        "value": [
+          {
+            "otorgado_a": "MARIA ELENA TORRES VEGA",
+            "tipo_poder": "Poder General para Pleitos y Cobranzas",
+            "modalidad": "Individual",
+            "page": 2
+          },
+          {
+            "otorgado_a": "MARIA ELENA TORRES VEGA",
+            "tipo_poder": "Poder General para Actos de Administración",
+            "modalidad": "Individual",
+            "page": 2
+          },
+          {
+            "otorgado_a": "ALEJANDRO GOMEZ RUIZ",
+            "tipo_poder": "Poder General para Pleitos y Cobranzas",
+            "modalidad": "Individual",
+            "page": 4
+          },
+          {
+            "otorgado_a": "ALEJANDRO GOMEZ RUIZ",
+            "tipo_poder": "Poder General para Actos de Administración",
+            "modalidad": "Individual",
+            "page": 4
+          },
+          {
+            "otorgado_a": "ALEJANDRO GOMEZ RUIZ",
+            "tipo_poder": "Poder General para Actos de Dominio",
+            "modalidad": "Individual",
+            "page": 4
+          }
+        ],
+        "page": 2
+      },
+      "capital_social_actual": {
+        "value": {
+          "monto_numerico": 1000000.0,
+          "moneda": "MXN",
+          "monto_en_letra": "UN MILLON DE PESOS 00/100 MONEDA NACIONAL",
+          "fecha_acto_vigente": "2024-08-20",
+          "escritura_origen": "58,400"
+        },
+        "page": 3
+      }
+    },
+    "revoked_representatives": [
+      "JUAN CARLOS PEREZ LOPEZ"
+    ],
+    "expected_human_review_fields": [],
+    "amendment_history": {
+      "event_count": 4,
+      "event_types": [
+        "constitucion_original",
+        "aumento_capital",
+        "revocacion_poderes",
+        "otorgamiento_poderes"
+      ],
+      "events": [
+        {
+          "event_type": "constitucion_original",
+          "fecha_acto": "2019-05-10",
+          "numero_escritura": "30,100",
+          "page": 1,
+          "sujeto_afectado": null,
+          "monto_nuevo": 100000.0
+        },
+        {
+          "event_type": "aumento_capital",
+          "fecha_acto": "2024-08-20",
+          "numero_escritura": "58,400",
+          "page": 3,
+          "sujeto_afectado": null,
+          "monto_nuevo": 1000000.0
+        },
+        {
+          "event_type": "revocacion_poderes",
+          "fecha_acto": "2024-08-20",
+          "numero_escritura": "58,400",
+          "page": 3,
+          "sujeto_afectado": "SR. JUAN C. PEREZ LOPEZ",
+          "monto_nuevo": null
+        },
+        {
+          "event_type": "otorgamiento_poderes",
+          "fecha_acto": "2024-08-20",
+          "numero_escritura": "58,400",
+          "page": 4,
+          "sujeto_afectado": "ING. ALEJANDRO GÓMEZ RUIZ",
+          "monto_nuevo": null
+        }
+      ]
+    }
+  }
+}
