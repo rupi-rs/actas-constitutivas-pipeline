@@ -9,19 +9,26 @@ import pytest
 from src.core.config import Settings
 from src.ingestion.pdf_inspector import PDFInspector
 from src.pipeline.orchestrator import build_orchestrator
+from rapidfuzz import fuzz
+
 from src.pipeline.validators import (
     CAPITAL_MISMATCH_REASON,
     GROUNDING_FAILURE_REASON,
+    TEMPORAL_INCONSISTENCY_REASON,
+    VALUE_NOT_IN_QUOTE_REASON,
     apply_confidence_routing,
+    digit_tokens,
     normalize_for_grounding,
     spanish_amount_to_words,
     verify_capital_consistency,
     verify_grounding,
+    verify_temporal_consistency,
+    verify_value_in_quote,
 )
 from src.providers.interfaces import PageContent, PageSource
 from src.providers.llm_provider import build_pages_xml
 from src.providers.verifier_provider import calibrate_predicate_confidence
-from src.schemas.deed_models import CapitalInfo, ConfidenceSource, RawDeedExtraction
+from src.schemas.deed_models import AmendmentType, CapitalInfo, ConfidenceSource, NotaryInfo, RawDeedExtraction
 
 ACTA_B_REVIEW_REASON = (
     "Low OCR confidence (0.72) and Decisions predicate confidence (0.56 < 0.80) "
@@ -329,3 +336,297 @@ def test_build_pages_xml_requires_pages() -> None:
 
     with pytest.raises(ExtractionError):
         build_pages_xml([])
+
+
+GROUNDING_PAGE: str = (
+    "ESCRITURA PUBLICA NUMERO 30,100 (TREINTA MIL CIEN). En la Ciudad de Guadalajara, Jalisco, a 10 de "
+    "mayo de 2019, ante el Licenciado ARTURO VILLASEÑOR ORTIZ, Notario Publico Numero 15 de Guadalajara, "
+    "Jalisco, comparecen el LIC. JUAN CARLOS PÉREZ LÓPEZ y la C. MARIA ELENA TORRES VEGA. Se aprueba "
+    "quedar fijado en la cantidad actual de $1,000,000.00 (UN MILLON DE PESOS 00/100 MONEDA NACIONAL)."
+)
+"""Synthetic page used by the hardened grounding tests."""
+
+
+def _grounded(quote: str) -> bool:
+    """Run the grounding check of one quote against :data:`GROUNDING_PAGE`.
+
+    Parameters
+    ----------
+    quote : str
+        Evidence quote.
+
+    Returns
+    -------
+    bool
+        ``grounding_verified`` after :func:`verify_grounding`.
+    """
+    model = RawDeedExtraction.model_validate(
+        {
+            "razon_social": {"status": "no_encontrado"},
+            "fecha_constitucion": {"status": "no_encontrado"},
+            "numero_escritura": {
+                "value": "30,100",
+                "status": "extraido",
+                "evidence": {
+                    "page_number": 1,
+                    "source_quote": quote,
+                    "confidence_score": 1.0,
+                    "confidence_source": "native_pdf",
+                },
+            },
+            "notario": {"status": "no_encontrado"},
+            "socios": {"status": "no_encontrado"},
+            "representantes_legales": {"status": "no_encontrado"},
+            "poderes": {"status": "no_encontrado"},
+            "capital_social_actual": {"status": "no_encontrado"},
+        }
+    )
+    verify_grounding(model, {1: GROUNDING_PAGE})
+    assert model.numero_escritura.evidence is not None
+    return model.numero_escritura.evidence.grounding_verified
+
+
+@pytest.mark.parametrize(
+    "quote",
+    [
+        "quedar fijado en la cantidad actual de $7,000,000.00 (UN MILLON DE PESOS 00/100 MONEDA NACIONAL)",
+        "ante el Licenciado ARTURO VILLASEÑOR ORTIZ, Notario Publico Numero 51 de Guadalajara, Jalisco",
+        "ESCRITURA PUBLICA NUMERO 30,700 (TREINTA MIL CIEN)",
+        "a 10 de mayo de 2018",
+        "comparecen el LIC. JUAN CARLOS PEREZ LOZANO",
+        "comparecen el LIC. JUAN CARLOS PEREZ LOZANO y la C. MARIA ELENA TORRES VEGA. Se aprueba quedar fijado",
+    ],
+)
+def test_grounding_rejects_altered_quotes(quote: str) -> None:
+    """Quotes with altered numbers, dates or names fail despite partial_ratio >= 90.
+
+    Parameters
+    ----------
+    quote : str
+        Altered quote from the review.
+    """
+    score = fuzz.partial_ratio(normalize_for_grounding(quote), normalize_for_grounding(GROUNDING_PAGE))
+    assert score >= 90.0
+    assert _grounded(quote) is False
+
+
+@pytest.mark.parametrize(
+    "quote",
+    [
+        "comparecen el LIC. JUAN CARLOS PEREZLOPEZ y la C. MARIA",
+        "ante el Licenciado ARTURO VILLASENOR ORTIZ Notario Publico Numero 15 de Guadalajara Jalisco",
+        "ante el Licenciado ARTURO VILLASEÑOR ORTlZ, Notario Publico Numero 15 de Guadalajara, Jalisco",
+        "cantidad actual de $1.000.000,00 (UN MILLON DE PESOS 00/100 MONEDA NACIONAL)",
+    ],
+)
+def test_grounding_tolerates_ocr_variations(quote: str) -> None:
+    """Whitespace, punctuation, accent and single-character OCR variations still ground.
+
+    Parameters
+    ----------
+    quote : str
+        Quote with benign OCR differences.
+    """
+    assert _grounded(quote) is True
+
+
+def test_digit_tokens() -> None:
+    """Digit groups drop thousands and decimal separators."""
+    assert digit_tokens("$1,000,000.00 y 15 de 2019") == ["100000000", "15", "2019"]
+    assert digit_tokens("sin numeros") == []
+
+
+def test_failed_revocation_event_grounding_flags_dependent_fields(
+    settings: Settings, sample_paths: dict[str, Path], raw_extractions: dict[str, RawDeedExtraction]
+) -> None:
+    """A revocation event failing grounding flags representatives and powers.
+
+    Parameters
+    ----------
+    settings : Settings
+        Isolated settings.
+    sample_paths : dict of str to Path
+        Generated sample PDFs.
+    raw_extractions : dict of str to RawDeedExtraction
+        Cached raw extractions per acta.
+    """
+    model = raw_extractions["acta_c"]
+    revocation = next(e for e in model.amendment_history if e.event_type is AmendmentType.REVOCATION)
+    revocation.evidence.source_quote = revocation.evidence.source_quote.replace("PEREZ LOPEZ", "PEREZ LOZANO")
+    failures = verify_grounding(model, _page_texts(settings, sample_paths["acta_c"]))
+    assert any("revocacion_poderes" in failure for failure in failures)
+    assert revocation.evidence.grounding_verified is False
+    assert model.representantes_legales.requires_human_review is True
+    assert model.poderes.requires_human_review is True
+    assert "revocacion_poderes event of deed 58,400" in (model.representantes_legales.review_reason or "")
+    assert model.capital_social_actual.requires_human_review is False
+
+
+def test_failed_capital_event_grounding_flags_capital(
+    settings: Settings, sample_paths: dict[str, Path], raw_extractions: dict[str, RawDeedExtraction]
+) -> None:
+    """A capital increase event failing grounding flags capital_social_actual.
+
+    Parameters
+    ----------
+    settings : Settings
+        Isolated settings.
+    sample_paths : dict of str to Path
+        Generated sample PDFs.
+    raw_extractions : dict of str to RawDeedExtraction
+        Cached raw extractions per acta.
+    """
+    model = raw_extractions["acta_c"]
+    increase = next(e for e in model.amendment_history if e.event_type is AmendmentType.CAPITAL_INCREASE)
+    increase.evidence.source_quote = increase.evidence.source_quote.replace("$1,000,000.00", "$7,000,000.00")
+    verify_grounding(model, _page_texts(settings, sample_paths["acta_c"]))
+    assert increase.evidence.grounding_verified is False
+    assert model.capital_social_actual.requires_human_review is True
+    assert model.representantes_legales.requires_human_review is False
+
+
+@pytest.mark.parametrize("acta_id", ["acta_a", "acta_b", "acta_c"])
+def test_cached_actas_pass_hardened_checks(
+    settings: Settings,
+    sample_paths: dict[str, Path],
+    raw_extractions: dict[str, RawDeedExtraction],
+    acta_id: str,
+) -> None:
+    """The pre-verified caches pass value-in-quote and temporal consistency checks.
+
+    Parameters
+    ----------
+    settings : Settings
+        Isolated settings.
+    sample_paths : dict of str to Path
+        Generated sample PDFs.
+    raw_extractions : dict of str to RawDeedExtraction
+        Cached raw extractions per acta.
+    acta_id : str
+        Acta identifier.
+    """
+    model = raw_extractions[acta_id]
+    assert verify_value_in_quote(model) == []
+    assert verify_temporal_consistency(model) == []
+    if acta_id != "acta_b":
+        assert verify_grounding(model, _page_texts(settings, sample_paths[acta_id])) == []
+    assert not any(
+        getattr(model, name).requires_human_review
+        for name in ("numero_escritura", "fecha_constitucion", "notario", "capital_social_actual")
+    )
+
+
+def test_temporal_consistency_flags_capital_event_before_incorporation(
+    raw_extractions: dict[str, RawDeedExtraction],
+) -> None:
+    """A capital increase dated before fecha_constitucion flags capital_social_actual.
+
+    Parameters
+    ----------
+    raw_extractions : dict of str to RawDeedExtraction
+        Cached raw extractions per acta.
+    """
+    model = raw_extractions["acta_c"]
+    increase = next(e for e in model.amendment_history if e.event_type is AmendmentType.CAPITAL_INCREASE)
+    increase.fecha_acto = "2014-08-20"
+    issues = verify_temporal_consistency(model)
+    assert len(issues) == 1
+    assert "aumento_capital" in issues[0]
+    assert TEMPORAL_INCONSISTENCY_REASON in (model.capital_social_actual.review_reason or "")
+    assert model.representantes_legales.requires_human_review is False
+
+
+def test_temporal_consistency_flags_revocation_and_appointment(
+    raw_extractions: dict[str, RawDeedExtraction],
+) -> None:
+    """Revocations and appointments predating the incorporation flag representatives and powers.
+
+    Parameters
+    ----------
+    raw_extractions : dict of str to RawDeedExtraction
+        Cached raw extractions per acta.
+    """
+    model = raw_extractions["acta_c"]
+    revocation = next(e for e in model.amendment_history if e.event_type is AmendmentType.REVOCATION)
+    revocation.fecha_acto = "2014-08-20"
+    reps = model.representantes_legales.value or []
+    reps[1].fecha_nombramiento = "2018-01-01"
+    issues = verify_temporal_consistency(model)
+    assert len(issues) == 2
+    assert model.representantes_legales.requires_human_review is True
+    assert model.poderes.requires_human_review is True
+    assert model.capital_social_actual.requires_human_review is False
+
+
+def test_value_in_quote_flags_unsupported_scalars(raw_extractions: dict[str, RawDeedExtraction]) -> None:
+    """Values that do not appear in their own quote are flagged.
+
+    Parameters
+    ----------
+    raw_extractions : dict of str to RawDeedExtraction
+        Cached raw extractions per acta.
+    """
+    model = raw_extractions["acta_c"]
+    model.numero_escritura.value = "30,700"
+    model.fecha_constitucion.value = "2018-05-10"
+    assert model.notario.value is not None
+    model.notario.value = NotaryInfo(
+        nombre=model.notario.value.nombre, numero_notaria=51, entidad_federativa="Jalisco"
+    )
+    assert model.capital_social_actual.value is not None
+    model.capital_social_actual.value.monto_numerico = 7000000.0
+    failures = verify_value_in_quote(model)
+    assert failures == ["numero_escritura", "fecha_constitucion", "notario", "capital_social_actual"]
+    for name in failures:
+        field = getattr(model, name)
+        assert field.requires_human_review is True
+        assert VALUE_NOT_IN_QUOTE_REASON in (field.review_reason or "")
+
+
+@pytest.mark.parametrize(
+    ("value", "quote", "supported"),
+    [
+        ("2019-05-10", "a 10 de mayo de 2019", True),
+        ("2019-05-10", "a los diez dias del mes de mayo de dos mil diecinueve", True),
+        ("2019-05-10", "Guadalajara, 10/05/2019", True),
+        ("2019-05-10", "a 10 de junio de 2019", False),
+        ("2019-05-10", "a 11 de mayo de 2019", False),
+        ("2019-05-01", "al primero de mayo de 2019", True),
+    ],
+)
+def test_value_in_quote_dates(
+    raw_extractions: dict[str, RawDeedExtraction], value: str, quote: str, supported: bool
+) -> None:
+    """Dates are supported when year, month and day appear as digits or words.
+
+    Parameters
+    ----------
+    raw_extractions : dict of str to RawDeedExtraction
+        Cached raw extractions per acta.
+    value : str
+        ISO date value.
+    quote : str
+        Evidence quote.
+    supported : bool
+        Expected outcome.
+    """
+    model = raw_extractions["acta_c"]
+    model.fecha_constitucion.value = value
+    assert model.fecha_constitucion.evidence is not None
+    model.fecha_constitucion.evidence.source_quote = quote
+    failures = verify_value_in_quote(model)
+    assert ("fecha_constitucion" not in failures) is supported
+
+
+def test_value_in_quote_accepts_notary_number_in_words(raw_extractions: dict[str, RawDeedExtraction]) -> None:
+    """A notary number written in words is supported.
+
+    Parameters
+    ----------
+    raw_extractions : dict of str to RawDeedExtraction
+        Cached raw extractions per acta.
+    """
+    model = raw_extractions["acta_c"]
+    assert model.notario.evidence is not None
+    model.notario.evidence.source_quote = "ante el Licenciado ARTURO VILLASEÑOR ORTIZ, Notario Publico numero QUINCE"
+    assert verify_value_in_quote(model) == []

@@ -334,7 +334,8 @@
           "confidence_source": "native_pdf",
           "grounding_verified": false,
           "bounding_box": null
-        }
+        },
+        "revoked_appointment_evidence": []
       },
       {
         "event_type": "aumento_capital",
@@ -352,7 +353,8 @@
           "confidence_source": "native_pdf",
           "grounding_verified": false,
           "bounding_box": null
-        }
+        },
+        "revoked_appointment_evidence": []
       },
       {
         "event_type": "revocacion_poderes",
@@ -370,7 +372,8 @@
           "confidence_source": "native_pdf",
           "grounding_verified": false,
           "bounding_box": null
-        }
+        },
+        "revoked_appointment_evidence": []
       },
       {
         "event_type": "otorgamiento_poderes",
@@ -388,7 +391,8 @@
           "confidence_source": "native_pdf",
           "grounding_verified": false,
           "bounding_box": null
-        }
+        },
+        "revoked_appointment_evidence": []
       }
     ]
   },

@@ -265,7 +265,8 @@
           "confidence_source": "native_pdf",
           "grounding_verified": false,
           "bounding_box": null
-        }
+        },
+        "revoked_appointment_evidence": []
       }
     ]
   },

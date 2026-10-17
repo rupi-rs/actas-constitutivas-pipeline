@@ -350,6 +350,13 @@ class AmendmentEvent(StrictModel):
         Resolver similarity score (0-100).
     evidence : Evidence
         Grounding evidence.
+    revoked_appointment_evidence : list of Evidence, default []
+        Schema extension beyond spec 01, filled by the resolver only for
+        ``REVOCATION`` events: a deep copy of the appointment evidence of
+        every representative revoked by the act, so the output retains
+        both the appointment and the revocation evidence in structured
+        form. The empty default keeps cached extractions and ground truth
+        files (which omit the key) valid.
     """
 
     event_type: AmendmentType
@@ -361,6 +368,7 @@ class AmendmentEvent(StrictModel):
     matched_canonical_entity: Optional[str] = None
     fuzzy_match_score: Optional[float] = None
     evidence: Evidence
+    revoked_appointment_evidence: list[Evidence] = Field(default_factory=list)
 
 
 class AuditMetadata(StrictModel):
@@ -454,11 +462,13 @@ def raw_extraction_json_schema() -> dict[str, Any]:
     Notes
     -----
     This plain Pydantic schema is not OpenAI strict-mode compatible as-is
-    (fields with defaults are optional). For Structured Outputs pass the
-    model class to ``client.beta.chat.completions.parse(response_format=
-    RawDeedExtraction)``, whose strict conversion marks every property
-    required (nullable where optional) and sets
-    ``additionalProperties: false``.
+    (fields with defaults are optional and ``default`` keywords are
+    emitted). For Structured Outputs use :func:`openai_strict_json_schema`
+    instead, which marks every property required (nullable where
+    optional), sets ``additionalProperties: false`` and strips ``default``
+    keywords; the LLM provider sends that schema as a strict
+    ``json_schema`` response format and validates the reply with
+    ``RawDeedExtraction.model_validate_json``.
     """
     return RawDeedExtraction.model_json_schema(by_alias=True)
 
