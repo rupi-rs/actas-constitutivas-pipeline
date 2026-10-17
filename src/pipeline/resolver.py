@@ -24,6 +24,12 @@ Resolution rules (CLAUDE.md section 5 rule 4, spec 03 section 1):
   ``[REVIEW_SCORE_FLOOR, threshold)`` with agreeing surnames) never revoke
   silently and never keep silently: the representative stays listed and
   ``representantes_legales`` is flagged for human review with a reason.
+- A matched revocation dated before the only appointment of the person is
+  not applied but flags ``representantes_legales`` and ``poderes`` for
+  review (``revocation_date_inconsistent``).
+- A ``sujeto_afectado`` naming several people is split and every person
+  is evaluated separately; the appointment evidence of each revoked person
+  is copied into ``revoked_appointment_evidence`` of the revocation event.
 """
 
 from __future__ import annotations
@@ -60,10 +66,16 @@ INITIAL_EXPANSION_SCORE: float = 88.0
 """Minimum score granted when an abbreviated initial expands to a full given name."""
 
 _PREFIX_ALTERNATION: str = (
-    "LICENCIADO|LICENCIADA|LIC|INGENIERO|INGENIERA|ING|SENOR|SENORA|SR|SRA|SRITA|"
-    "DOCTOR|DOCTORA|DR|DRA|MAESTRO|MAESTRA|MTRO|MTRA|CIUDADANO|CIUDADANA|C"
+    r"CONTADORA\s+PUBLICA|CONTADOR\s+PUBLICO|C\s*\.?\s*P|"
+    r"EL\s+SENOR|LA\s+SENORA|LOS\s+SENORES|LAS\s+SENORAS|SENORES|SENORAS|SRES|SRAS|"
+    "LICENCIADO|LICENCIADA|LICDO|LICDA|LIC|INGENIERO|INGENIERA|ING|"
+    "ARQUITECTO|ARQUITECTA|ARQ|SENORITA|SENOR|SENORA|SRITA|SRA|SR|DONA|DON|"
+    "DOCTOR|DOCTORA|DRA|DR|MAESTRO|MAESTRA|MTRO|MTRA|CIUDADANO|CIUDADANA|C"
 )
+"""Leading honorifics; multi-word and longer forms precede their prefixes so they win the alternation."""
+
 _LEADING_PREFIX_RE: re.Pattern[str] = re.compile(rf"^(?:(?:{_PREFIX_ALTERNATION})\b\.?\s*)+")
+_SUBJECT_SEPARATOR_RE: re.Pattern[str] = re.compile(r"\s*[,;]\s*|\s+Y\s+|\s+E\s+(?=H?I)")
 _PUNCTUATION_RE: re.Pattern[str] = re.compile(r"[.,;\-]")
 _WHITESPACE_RE: re.Pattern[str] = re.compile(r"\s+")
 _PARENTHESIS_RE: re.Pattern[str] = re.compile(r"\(([^()]*)\)")
@@ -150,7 +162,10 @@ def normalize_person_name(raw_name: str) -> str:
        (possibly several, e.g. ``"C. LIC. ..."``) are removed. A middle
        initial such as the ``C.`` in ``"JUAN C. PEREZ LOPEZ"`` is kept,
        which is what makes initial-expansion matching possible. If
-       stripping would leave nothing, the unstripped text is kept.
+       stripping would leave nothing, the unstripped text is kept. The
+       list extends spec 03 with ``C.P.`` / ``CP`` / ``CONTADOR PUBLICO``,
+       ``LICDO`` / ``LICDA``, ``ARQ`` / ``ARQUITECTO``, ``DON`` / ``DONA``
+       and ``EL SENOR`` / ``LA SENORA`` (matched after accent stripping).
     4. Punctuation ``. , ; -`` is replaced by spaces and runs of whitespace
        are collapsed.
     """
@@ -417,6 +432,45 @@ def extract_amount_in_words(source_quote: str, amount: Optional[float] = None) -
     return candidates[-1] if candidates else None
 
 
+def split_revocation_subjects(subject: str) -> list[str]:
+    """Split a revocation subject naming several people into one name each.
+
+    Parameters
+    ----------
+    subject : str
+        ``sujeto_afectado`` of a ``REVOCATION`` event, for example
+        ``"SR. JUAN C. PEREZ LOPEZ Y LIC. MARIA ELENA TORRES VEGA"``.
+
+    Returns
+    -------
+    list of str
+        One raw name per person (``["SR. JUAN C. PEREZ LOPEZ",
+        "LIC. MARIA ELENA TORRES VEGA"]``), or ``[subject]`` when no split
+        applies.
+
+    Notes
+    -----
+    Separators are ``","``, ``";"``, the conjunction ``" Y "`` and the
+    conjunction ``" E "`` when the next word starts with ``I`` or ``HI``
+    (Spanish euphony rule). Splitting is evaluated on the uppercase,
+    accent-free text. If any fragment would have fewer than two name
+    tokens (for example a compound surname such as ``"PEREZ Y LOPEZ"``),
+    the whole subject is kept as a single name so that the matcher, and
+    not the splitter, decides.
+    """
+    text = strip_accents(subject.upper().strip())
+    fragments = [fragment.strip() for fragment in _SUBJECT_SEPARATOR_RE.split(text) if fragment.strip()]
+    if len(fragments) < 2:
+        return [subject]
+    if any(len(normalize_person_name(fragment).split()) < 2 for fragment in fragments):
+        return [subject]
+    return fragments
+
+
+_RevokedPair = tuple[LegalRepresentativeItem, PersonMatch]
+"""A revoked representative paired with the match that revoked it."""
+
+
 class TemporalResolver:
     """Resolve the current corporate state from a multi-act extraction.
 
@@ -607,12 +661,24 @@ class TemporalResolver:
         -------
         list of str
             Original names of the revoked representatives.
+
+        Notes
+        -----
+        A ``sujeto_afectado`` naming several people is split with
+        :func:`split_revocation_subjects` and every person is evaluated
+        separately against the same event. The resolver-owned event fields
+        (``matched_canonical_entity``, ``fuzzy_match_score``,
+        ``revoked_appointment_evidence``) are reset before resolution.
         """
         reps_field = model.representantes_legales
         powers_field = model.poderes
         reps: list[LegalRepresentativeItem] = list(reps_field.value or [])
         powers: list[PowerOfAttorneyItem] = list(powers_field.value or [])
         revoked_names: list[str] = []
+        for event in model.amendment_history:
+            event.matched_canonical_entity = None
+            event.fuzzy_match_score = None
+            event.revoked_appointment_evidence = []
         for event in model.amendment_history:
             if event.event_type is not AmendmentType.REVOCATION:
                 continue
@@ -621,32 +687,72 @@ class TemporalResolver:
                     f"Revocation in deed {event.numero_escritura} does not name the affected person"
                 )
                 continue
-            reps, powers, names = self._apply_single_revocation(
-                event, reps, powers, model, job_id=job_id, doc_sha256=doc_sha256
-            )
-            revoked_names.extend(names)
+            event_revoked: list[_RevokedPair] = []
+            for subject in split_revocation_subjects(event.sujeto_afectado):
+                reps, powers, pairs = self._apply_single_revocation(
+                    event, subject, reps, powers, model, job_id=job_id, doc_sha256=doc_sha256
+                )
+                event_revoked.extend(pairs)
+            self._record_revocation_evidence(event, event_revoked)
+            revoked_names.extend(rep.nombre for rep, _ in event_revoked)
         if reps_field.value is not None:
             reps_field.value = reps
         if powers_field.value is not None:
             powers_field.value = powers
         return revoked_names
 
+    @staticmethod
+    def _record_revocation_evidence(event: AmendmentEvent, revoked: list[_RevokedPair]) -> None:
+        """Attach the revoked appointments to the revocation event.
+
+        Parameters
+        ----------
+        event : AmendmentEvent
+            ``REVOCATION`` event (mutated).
+        revoked : list of tuple of (LegalRepresentativeItem, PersonMatch)
+            Representatives revoked by the event with their match.
+
+        Notes
+        -----
+        ``matched_canonical_entity`` lists the original names joined by
+        ``"; "``, ``fuzzy_match_score`` keeps the lowest (most conservative)
+        score, ``revoked_appointment_evidence`` receives a deep copy of
+        each appointment evidence and ``descripcion`` gets a short note
+        without the quotes.
+        """
+        if not revoked:
+            return
+        event.matched_canonical_entity = "; ".join(rep.nombre for rep, _ in revoked)
+        event.fuzzy_match_score = round(min(match.score for _, match in revoked), 2)
+        event.revoked_appointment_evidence = [rep.evidence.model_copy(deep=True) for rep, _ in revoked]
+        appointment_refs = "; ".join(
+            f"{rep.nombre} ({rep.cargo}, appointed {rep.fecha_nombramiento}, page {rep.evidence.page_number})"
+            for rep, _ in revoked
+        )
+        marker = "Revoked appointment evidence:"
+        if marker not in event.descripcion:
+            event.descripcion = f"{event.descripcion} | {marker} {appointment_refs}"
+
     def _apply_single_revocation(
         self,
         event: AmendmentEvent,
+        subject: str,
         reps: list[LegalRepresentativeItem],
         powers: list[PowerOfAttorneyItem],
         model: RawDeedExtraction,
         *,
         job_id: str,
         doc_sha256: str,
-    ) -> tuple[list[LegalRepresentativeItem], list[PowerOfAttorneyItem], list[str]]:
-        """Apply one revocation event to the active lists.
+    ) -> tuple[list[LegalRepresentativeItem], list[PowerOfAttorneyItem], list[_RevokedPair]]:
+        """Apply the revocation of one person to the active lists.
 
         Parameters
         ----------
         event : AmendmentEvent
-            ``REVOCATION`` event (mutated: canonical match and score).
+            ``REVOCATION`` event.
+        subject : str
+            Raw name of one revoked person (one fragment of
+            ``sujeto_afectado``).
         reps : list of LegalRepresentativeItem
             Currently active representatives.
         powers : list of PowerOfAttorneyItem
@@ -661,14 +767,26 @@ class TemporalResolver:
         Returns
         -------
         tuple
-            Remaining representatives, remaining powers and the original
-            names of the representatives revoked by this event.
+            Remaining representatives, remaining powers and the
+            ``(representative, match)`` pairs revoked for this person.
+
+        Notes
+        -----
+        A ``MATCH`` whose appointment is dated after the revocation is
+        never revoked. When another appointment of the same person dated
+        on or before the revocation is revoked by this event, the later
+        entry is a legitimate re-appointment and stays active. When no
+        such earlier appointment exists, the revocation predates the only
+        appointment (typically a date typo): the person stays listed, but
+        ``representantes_legales`` and ``poderes`` are flagged for review
+        and ``revocation_date_inconsistent`` is logged as
+        ``[REVIEW_REQUIRED]``, so a revoked person is never kept silently.
         """
-        subject = event.sujeto_afectado or ""
         subject_norm = normalize_person_name(subject)
         revocation_date = _parse_iso_date(event.fecha_acto)
         kept_reps: list[LegalRepresentativeItem] = []
-        revoked: list[tuple[LegalRepresentativeItem, PersonMatch]] = []
+        revoked: list[_RevokedPair] = []
+        later_appointments: list[LegalRepresentativeItem] = []
         any_candidate = False
         for rep in reps:
             match = classify_person_match(subject_norm, rep.nombre_normalizado, self._threshold)
@@ -683,17 +801,23 @@ class TemporalResolver:
                     f"(score {match.score:.2f}, surnames agree: {match.surnames_agree}, "
                     f"given name agrees: {match.given_name_agrees})"
                 )
-                self._log_ambiguous(event, rep.nombre, match, job_id=job_id, doc_sha256=doc_sha256)
+                self._log_ambiguous(event, subject, rep.nombre, match, job_id=job_id, doc_sha256=doc_sha256)
                 continue
             appointment_date = _parse_iso_date(rep.fecha_nombramiento)
             if revocation_date is not None and appointment_date is not None and appointment_date > revocation_date:
                 kept_reps.append(rep)
+                later_appointments.append(rep)
                 continue
             if revocation_date is None or appointment_date is None:
                 model.representantes_legales.flag_for_review(
                     f"Revocation of '{rep.nombre}' applied without a verifiable date order"
                 )
             revoked.append((rep, match))
+
+        if later_appointments and not revoked:
+            self._flag_date_inconsistency(
+                event, subject, later_appointments, model, job_id=job_id, doc_sha256=doc_sha256
+            )
 
         if not revoked:
             if not any_candidate:
@@ -712,17 +836,6 @@ class TemporalResolver:
                 )
             return kept_reps, self._remove_powers(event, subject_norm, [], powers, model), []
 
-        best_rep, best_match = max(revoked, key=lambda pair: pair[1].score)
-        event.matched_canonical_entity = best_rep.nombre
-        event.fuzzy_match_score = round(best_match.score, 2)
-        appointment_refs = "; ".join(
-            f"{rep.nombre} ({rep.cargo}, appointed {rep.fecha_nombramiento}, page {rep.evidence.page_number}: "
-            f'"{rep.evidence.source_quote}")'
-            for rep, _ in revoked
-        )
-        marker = "Revoked appointment evidence:"
-        if marker not in event.descripcion:
-            event.descripcion = f"{event.descripcion} | {marker} {appointment_refs}"
         for rep, match in revoked:
             rep.vigente = False
             log_event(
@@ -742,7 +855,61 @@ class TemporalResolver:
             )
         revoked_norms = [rep.nombre_normalizado for rep, _ in revoked]
         remaining_powers = self._remove_powers(event, subject_norm, revoked_norms, powers, model)
-        return kept_reps, remaining_powers, [rep.nombre for rep, _ in revoked]
+        return kept_reps, remaining_powers, revoked
+
+    @staticmethod
+    def _flag_date_inconsistency(
+        event: AmendmentEvent,
+        subject: str,
+        later_appointments: list[LegalRepresentativeItem],
+        model: RawDeedExtraction,
+        *,
+        job_id: str,
+        doc_sha256: str,
+    ) -> None:
+        """Flag a matched revocation that predates every appointment of the person.
+
+        Parameters
+        ----------
+        event : AmendmentEvent
+            ``REVOCATION`` event.
+        subject : str
+            Raw name of the revoked person.
+        later_appointments : list of LegalRepresentativeItem
+            Matched representatives appointed after the revocation date.
+        model : RawDeedExtraction
+            Model whose ``representantes_legales`` and ``poderes`` fields
+            are flagged for review.
+        job_id : str
+            Job identifier for logging.
+        doc_sha256 : str
+            Document hash for logging.
+        """
+        for rep in later_appointments:
+            reason = (
+                f"Revocation of '{subject}' in deed {event.numero_escritura} dated {event.fecha_acto} "
+                f"precedes the appointment of '{rep.nombre}' dated {rep.fecha_nombramiento}; "
+                "revocation not applied, verify the act dates"
+            )
+            model.representantes_legales.flag_for_review(reason)
+            model.poderes.flag_for_review(reason)
+        log_event(
+            _LOGGER,
+            tag=StatusTag.REVIEW_REQUIRED,
+            event="revocation_date_inconsistent",
+            stage=_STAGE,
+            job_id=job_id,
+            doc_sha256=doc_sha256,
+            details={
+                "subject": subject,
+                "revocation_deed": event.numero_escritura,
+                "revocation_date": event.fecha_acto,
+                "appointments": [
+                    {"name": rep.nombre, "fecha_nombramiento": rep.fecha_nombramiento}
+                    for rep in later_appointments
+                ],
+            },
+        )
 
     def _remove_powers(
         self,
@@ -823,7 +990,7 @@ class TemporalResolver:
 
     @staticmethod
     def _log_ambiguous(
-        event: AmendmentEvent, candidate: str, match: PersonMatch, *, job_id: str, doc_sha256: str
+        event: AmendmentEvent, subject: str, candidate: str, match: PersonMatch, *, job_id: str, doc_sha256: str
     ) -> None:
         """Log an ambiguous revocation match requiring human review.
 
@@ -831,6 +998,8 @@ class TemporalResolver:
         ----------
         event : AmendmentEvent
             ``REVOCATION`` event.
+        subject : str
+            Raw name of the revoked person being matched.
         candidate : str
             Original name of the candidate representative.
         match : PersonMatch
@@ -848,7 +1017,7 @@ class TemporalResolver:
             job_id=job_id,
             doc_sha256=doc_sha256,
             details={
-                "subject": event.sujeto_afectado,
+                "subject": subject,
                 "candidate": candidate,
                 "score": round(match.score, 2),
                 "surnames_agree": match.surnames_agree,
@@ -869,6 +1038,7 @@ __all__ = [
     "extract_amount_in_words",
     "normalize_person_name",
     "person_similarity",
+    "split_revocation_subjects",
     "strip_accents",
     "surnames_agree",
 ]
