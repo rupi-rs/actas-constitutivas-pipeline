@@ -21,8 +21,9 @@ from rich.table import Table
 from rich.text import Text
 
 from src.core.config import Settings, get_settings
-from src.core.exceptions import PipelineError
-from src.core.logger import StatusTag, configure_logging, get_logger, log_event
+from src.core.exceptions import PipelineError, UnknownDocumentTypeError
+from src.core.logger import StatusTag, configure_logging, redact_text
+from src.core.registry import ACTA_CONSTITUTIVA, DocumentRegistry
 from src.pipeline.orchestrator import ProcessingResult, build_orchestrator
 from src.schemas.deed_models import AmendmentType
 
@@ -34,7 +35,6 @@ app = typer.Typer(
 )
 
 _console = Console(highlight=False, width=max(110, shutil.get_terminal_size(fallback=(120, 24)).columns))
-_logger = get_logger("cli")
 
 _TAG_STYLES: dict[str, str] = {
     "INFO": "",
@@ -118,10 +118,10 @@ def _say(tag: StatusTag, message: str) -> None:
     tag : StatusTag
         Status tag.
     message : str
-        Message text (printed verbatim, never parsed as markup).
+        Message text, PII-redacted and never parsed as markup.
     """
     line = Text(f"[{tag.value}]", style=_TAG_STYLES[tag.value])
-    line.append(f" {message}")
+    line.append(f" {redact_text(message)}")
     _console.print(line)
 
 
@@ -196,7 +196,7 @@ def startup(ctx: typer.Context) -> None:
 
 
 def _generate_samples(settings: Settings) -> bool:
-    """Generate synthetic deeds, caches, ground truth and study guides.
+    """Generate synthetic deeds, caches and ground truth.
 
     Parameters
     ----------
@@ -227,23 +227,6 @@ def _generate_samples(settings: Settings) -> bool:
         )
     _console.print(table)
     _say(StatusTag.OK, f"{len(deeds)} deeds, caches and ground truth written")
-    try:
-        from src.generators.study.study_pdfs import generate_study_guides
-    except ModuleNotFoundError:
-        log_event(
-            _logger,
-            tag=StatusTag.INFO,
-            event="study_guides_skipped",
-            stage="cli",
-            message="study guide generator not present; skipping",
-        )
-        return True
-    try:
-        guides = generate_study_guides(settings.study_guides_dir)
-    except Exception as exc:
-        _say(StatusTag.ERROR, f"study guide generation failed: {type(exc).__name__}: {exc}")
-        return False
-    _say(StatusTag.OK, f"{len(guides)} study guides written to {settings.study_guides_dir.name}/")
     return True
 
 
@@ -290,11 +273,19 @@ def _render_results(results: list[ProcessingResult]) -> None:
         for event in output.amendment_history:
             if event.event_type is not AmendmentType.REVOCATION:
                 continue
+            if event.matched_canonical_entity is None:
+                _say(
+                    StatusTag.WARN,
+                    f"{result.acta_id}: unmatched revocation of {event.sujeto_afectado} "
+                    f"(deed {event.numero_escritura}, {event.fecha_acto}); no active "
+                    "representative was removed",
+                )
+                continue
             score = f"{event.fuzzy_match_score:.2f}" if event.fuzzy_match_score is not None else "n/a"
             _say(
                 StatusTag.REVOKED,
                 f"{result.acta_id}: {event.sujeto_afectado} matched "
-                f"{event.matched_canonical_entity or 'no entity'} (similarity {score}, "
+                f"{event.matched_canonical_entity} (similarity {score}, "
                 f"deed {event.numero_escritura}, {event.fecha_acto}); removed from active representatives",
             )
         for name in result.review_fields:
@@ -305,7 +296,9 @@ def _render_results(results: list[ProcessingResult]) -> None:
             )
 
 
-def _process_all(settings: Settings, live: bool, force_refresh: bool) -> bool:
+def _process_all(
+    settings: Settings, live: bool, force_refresh: bool, document_type: str = ACTA_CONSTITUTIVA
+) -> bool:
     """Process every sample deed and render the summary.
 
     Parameters
@@ -316,12 +309,19 @@ def _process_all(settings: Settings, live: bool, force_refresh: bool) -> bool:
         Whether live providers may be used on cache misses.
     force_refresh : bool
         Whether to bypass the cache.
+    document_type : str, default ACTA_CONSTITUTIVA
+        Registered document type applied to every sample.
 
     Returns
     -------
     bool
         ``True`` if every document was processed.
     """
+    try:
+        DocumentRegistry.default().get(document_type)
+    except UnknownDocumentTypeError as exc:
+        _say(StatusTag.ERROR, f"{type(exc).__name__}: {exc.message}")
+        return False
     paths = sorted(settings.samples_dir.glob("acta_*.pdf"))
     if not paths:
         _say(
@@ -334,7 +334,9 @@ def _process_all(settings: Settings, live: bool, force_refresh: bool) -> bool:
     except PipelineError as exc:
         _say(StatusTag.ERROR, f"{type(exc).__name__}: {exc.message}")
         return False
-    results = orchestrator.process_all(paths, force_refresh=force_refresh)
+    results = orchestrator.process_all(
+        paths, document_type=document_type, force_refresh=force_refresh
+    )
     for failure in orchestrator.failures:
         _say(StatusTag.ERROR, f"{failure.path.name}: {failure.error_type}: {failure.message}")
     if results:
@@ -408,6 +410,12 @@ def _evaluate(settings: Settings) -> bool:
             _cell(f"{routing} (expected: {expected}; flagged: {flagged})"),
         )
     _console.print(summary)
+    if report.global_penalty > 0:
+        _say(
+            StatusTag.WARN,
+            f"global penalty -{report.global_penalty:.2f} applied to the overall score "
+            "(critical false positives present)",
+        )
     _say(
         StatusTag.INFO,
         f"overall score {report.overall_score:.3f}; overall evidence hit rate "
@@ -428,7 +436,7 @@ def _evaluate(settings: Settings) -> bool:
 
 @app.command("generate-samples")
 def generate_samples(ctx: typer.Context) -> None:
-    """Generate sample PDFs, ground truth, caches and study guides.
+    """Generate sample PDFs, ground truth and caches.
 
     Parameters
     ----------
@@ -453,6 +461,9 @@ def process_all(
     force_refresh: bool = typer.Option(
         False, "--force-refresh", help="Ignore existing cache entries."
     ),
+    document_type: str = typer.Option(
+        ACTA_CONSTITUTIVA, "--document-type", help="Registered document type."
+    ),
 ) -> None:
     """Process all sample deeds through the pipeline.
 
@@ -464,13 +475,15 @@ def process_all(
         Whether live providers may be used on cache misses.
     force_refresh : bool
         Whether to bypass the cache.
+    document_type : str
+        Registered document type.
 
     Raises
     ------
     typer.Exit
         With code 1 on failure.
     """
-    if not _process_all(_settings(ctx), live, force_refresh):
+    if not _process_all(_settings(ctx), live, force_refresh, document_type):
         raise typer.Exit(code=1)
 
 
@@ -498,6 +511,9 @@ def demo(
     live: bool = typer.Option(
         False, "--live/--no-live", help="Use live OpenAI providers on cache misses."
     ),
+    document_type: str = typer.Option(
+        ACTA_CONSTITUTIVA, "--document-type", help="Registered document type."
+    ),
 ) -> None:
     """Run generate-samples, process-all and evaluate end to end.
 
@@ -507,6 +523,8 @@ def demo(
         Typer context carrying the settings.
     live : bool
         Whether live providers may be used on cache misses.
+    document_type : str
+        Registered document type.
 
     Raises
     ------
@@ -516,7 +534,7 @@ def demo(
     settings = _settings(ctx)
     steps: list[tuple[str, Callable[[], bool]]] = [
         ("generate-samples", lambda: _generate_samples(settings)),
-        ("process-all", lambda: _process_all(settings, live, False)),
+        ("process-all", lambda: _process_all(settings, live, False, document_type)),
         ("evaluate", lambda: _evaluate(settings)),
     ]
     for step, action in steps:
