@@ -187,7 +187,15 @@ def test_locate_bbox_overlap_uses_minimum() -> None:
 def test_two_line_quote_triggers_escalation_and_keeps_grounding_cap(
     settings: Settings, raw_extractions: dict[str, RawDeedExtraction]
 ) -> None:
-    """Escalation happens for a low second line and never lifts the grounding cap."""
+    """Escalation happens for a low second line and never lifts the grounding cap.
+
+    Parameters
+    ----------
+    settings : object
+        Isolated workspace settings.
+    raw_extractions : object
+        Raw extraction payloads keyed by deed identifier.
+    """
     ocr = _two_line_ocr()
     for grounded, expected in ((True, 0.9), (False, 0.4)):
         raw = raw_extractions["acta_b"].model_copy(deep=True)
@@ -207,7 +215,15 @@ def test_two_line_quote_triggers_escalation_and_keeps_grounding_cap(
 def test_enforce_spec_marks_missing_required_and_inapplicable_fields(
     settings: Settings, raw_extractions: dict[str, RawDeedExtraction]
 ) -> None:
-    """Required fields without value or evidence become no_encontrado; others no_aplicable."""
+    """Required fields without value or evidence become no_encontrado; others no_aplicable.
+
+    Parameters
+    ----------
+    settings : object
+        Isolated workspace settings.
+    raw_extractions : object
+        Raw extraction payloads keyed by deed identifier.
+    """
     raw = raw_extractions["acta_a"].model_copy(deep=True)
     raw.razon_social.value = None
     raw.fecha_constitucion.evidence = None
@@ -232,22 +248,36 @@ def test_enforce_spec_marks_missing_required_and_inapplicable_fields(
 def test_unknown_document_type_cli_exits_with_error(
     settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """--document-type with an unregistered value exits 1 with an [ERROR] line."""
+    """--document-type with an unregistered value exits 1 with an [ERROR] line.
+
+    Parameters
+    ----------
+    settings : object
+        Isolated workspace settings.
+    monkeypatch : object
+        Pytest monkeypatch fixture.
+    """
     monkeypatch.setenv("ACTAS_PROJECT_ROOT", str(settings.project_root))
     result = CliRunner().invoke(app, ["process-all", "--document-type", "nonexistent"])
     assert result.exit_code == 1
     assert "[ERROR]" in result.output
 
 
-def test_cli_help_has_no_study_guides() -> None:
-    """The CLI help never mentions study guides."""
+def test_cli_help_lists_only_pipeline_commands() -> None:
+    """The CLI help lists only the documented pipeline commands."""
     result = CliRunner().invoke(app, ["--help"])
     generate = CliRunner().invoke(app, ["generate-samples", "--help"])
     assert "study" not in (result.output + generate.output).lower()
 
 
 def test_say_redacts_pii(capsys: pytest.CaptureFixture[str]) -> None:
-    """Status lines mask RFC values before printing."""
+    """Status lines mask RFC values before printing.
+
+    Parameters
+    ----------
+    capsys : object
+        Pytest stdout and stderr capture fixture.
+    """
     _say(StatusTag.ERROR, "failure for PERJ800101ABC")
     out = capsys.readouterr().out
     assert "PERJ800101ABC" not in out and "PERJ******ABC" in out
@@ -325,7 +355,15 @@ class _MutatingLLM(CachedLLMProvider):
 def test_force_refresh_never_overwrites_pre_verified_entry(
     settings: Settings, sample_paths: dict[str, Path]
 ) -> None:
-    """A live force-refresh keeps the tracked pre-verified cache entry intact."""
+    """A live force-refresh keeps the tracked pre-verified cache entry intact.
+
+    Parameters
+    ----------
+    settings : object
+        Isolated workspace settings.
+    sample_paths : object
+        Generated sample PDF paths keyed by deed identifier.
+    """
     sample = sample_paths["acta_a"]
     cache_file = settings.cache_file_for(compute_file_sha256(sample))
     before = cache_file.read_text(encoding="utf-8")
@@ -340,13 +378,28 @@ def test_force_refresh_never_overwrites_pre_verified_entry(
 def test_live_result_with_grounding_failure_is_not_cached(
     settings: Settings, sample_paths: dict[str, Path]
 ) -> None:
-    """A live result whose quote is absent from the page is not persisted."""
+    """A live result whose quote is absent from the page is not persisted.
+
+    Parameters
+    ----------
+    settings : object
+        Isolated workspace settings.
+    sample_paths : object
+        Generated sample PDF paths keyed by deed identifier.
+    """
     sample = sample_paths["acta_a"]
     cache_file = settings.cache_file_for(compute_file_sha256(sample))
     reference = _StaticRepository(settings, json.loads(cache_file.read_text(encoding="utf-8")))
     cache_file.unlink()
 
     def corrupt(raw: RawDeedExtraction) -> None:
+        """Replace the razon_social quote with text absent from every page.
+
+        Parameters
+        ----------
+        raw : RawDeedExtraction
+            Extraction mutated in place.
+        """
         assert raw.razon_social.evidence is not None
         raw.razon_social.evidence.source_quote = "texto que no existe en ninguna pagina del documento"
 
@@ -360,7 +413,15 @@ def test_live_result_with_grounding_failure_is_not_cached(
 def test_stale_live_entry_is_a_miss_and_current_entry_is_a_hit(
     settings: Settings, sample_paths: dict[str, Path]
 ) -> None:
-    """On the live path a different prompt hash or model is a miss."""
+    """On the live path a different prompt hash or model is a miss.
+
+    Parameters
+    ----------
+    settings : object
+        Isolated workspace settings.
+    sample_paths : object
+        Generated sample PDF paths keyed by deed identifier.
+    """
     settings = replace(settings, openai_model="fake-live-model")
     sample = sample_paths["acta_a"]
     cache_file = settings.cache_file_for(compute_file_sha256(sample))

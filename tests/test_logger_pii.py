@@ -53,7 +53,15 @@ def test_curp_is_masked() -> None:
     ],
 )
 def test_rfc_separators_and_case_are_masked(raw: str, expected: str) -> None:
-    """RFCs with single separators or lowercase letters are masked in the same shape."""
+    """RFCs with single separators or lowercase letters are masked in the same shape.
+
+    Parameters
+    ----------
+    raw : object
+        Parametrized input value.
+    expected : object
+        Parametrized expected value.
+    """
     assert redact_text(f"rfc {raw} ok") == f"rfc {expected} ok"
 
 
@@ -101,7 +109,13 @@ def test_filter_masks_record_message() -> None:
 
 
 def test_console_output_is_redacted(capsys: pytest.CaptureFixture[str]) -> None:
-    """Console records never contain raw identifiers in message or details."""
+    """Console records never contain raw identifiers in message or details.
+
+    Parameters
+    ----------
+    capsys : object
+        Pytest stdout and stderr capture fixture.
+    """
     logger = get_logger("pii.console")
     log_event(
         logger,
@@ -120,7 +134,13 @@ def test_console_output_is_redacted(capsys: pytest.CaptureFixture[str]) -> None:
 
 
 def test_audit_output_is_redacted(audit_log_path: Path) -> None:
-    """JSONL records never contain raw identifiers in message or details."""
+    """JSONL records never contain raw identifiers in message or details.
+
+    Parameters
+    ----------
+    audit_log_path : object
+        Path of the isolated JSON Lines audit log.
+    """
     logger = get_logger("pii.audit")
     log_event(
         logger,
@@ -141,7 +161,13 @@ def test_audit_output_is_redacted(audit_log_path: Path) -> None:
 
 
 def test_audit_records_contain_required_keys(audit_log_path: Path) -> None:
-    """Every audit record carries the mandatory contextual fields."""
+    """Every audit record carries the mandatory contextual fields.
+
+    Parameters
+    ----------
+    audit_log_path : object
+        Path of the isolated JSON Lines audit log.
+    """
     logger = get_logger("audit.schema")
     log_event(
         logger,
@@ -171,7 +197,13 @@ def test_audit_records_contain_required_keys(audit_log_path: Path) -> None:
 
 
 def test_all_status_tags_render_on_console(capsys: pytest.CaptureFixture[str]) -> None:
-    """Each allowed tag appears in brackets on the console."""
+    """Each allowed tag appears in brackets on the console.
+
+    Parameters
+    ----------
+    capsys : object
+        Pytest stdout and stderr capture fixture.
+    """
     logger = get_logger("tags")
     for tag in StatusTag:
         log_event(logger, tag=tag, event="tag_probe", stage="testing")
@@ -187,13 +219,27 @@ def test_invalid_tag_raises_value_error() -> None:
 
 
 def test_string_tag_is_accepted(audit_log_path: Path) -> None:
-    """A string equal to a StatusTag value is accepted."""
+    """A string equal to a StatusTag value is accepted.
+
+    Parameters
+    ----------
+    audit_log_path : object
+        Path of the isolated JSON Lines audit log.
+    """
     log_event(get_logger("strtag"), tag="OK", event="string_tag", stage="testing")
     assert read_audit_records(audit_log_path)[-1]["tag"] == "OK"
 
 
 def test_handlers_are_not_duplicated(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """Repeated configure and get_logger calls keep a single handler per sink."""
+    """Repeated configure and get_logger calls keep a single handler per sink.
+
+    Parameters
+    ----------
+    tmp_path : object
+        Temporary directory provided by pytest.
+    capsys : object
+        Pytest stdout and stderr capture fixture.
+    """
     audit = tmp_path / "dup" / "audit.jsonl"
     for _ in range(3):
         base = configure_logging(audit_log_path=audit)

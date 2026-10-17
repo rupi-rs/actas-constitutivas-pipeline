@@ -149,6 +149,13 @@ def test_strict_schema_is_valid_for_structured_outputs() -> None:
     schema = openai_strict_json_schema()
 
     def walk(node: Any) -> None:
+        """Recursively assert strict-mode invariants on a schema node.
+
+        Parameters
+        ----------
+        node : Any
+            JSON schema fragment to inspect.
+        """
         if isinstance(node, dict):
             assert "default" not in node
             if node.get("type") == "object" or "properties" in node:
@@ -166,7 +173,15 @@ def test_strict_schema_is_valid_for_structured_outputs() -> None:
 def test_llm_success_uses_strict_json_schema(
     live_settings: Settings, raw_extractions: dict[str, RawDeedExtraction]
 ) -> None:
-    """A valid JSON completion is parsed and the request carries the strict schema."""
+    """A valid JSON completion is parsed and the request carries the strict schema.
+
+    Parameters
+    ----------
+    live_settings : object
+        Settings with a live API key configured.
+    raw_extractions : object
+        Raw extraction payloads keyed by deed identifier.
+    """
     raw = raw_extractions["acta_a"]
     create = MagicMock(return_value=_completion(raw.model_dump_json(by_alias=True)))
     provider = _make_llm(live_settings, create)
@@ -182,14 +197,26 @@ def test_llm_success_uses_strict_json_schema(
 
 
 def test_llm_refusal_raises(live_settings: Settings) -> None:
-    """A model refusal becomes ExtractionError."""
+    """A model refusal becomes ExtractionError.
+
+    Parameters
+    ----------
+    live_settings : object
+        Settings with a live API key configured.
+    """
     provider = _make_llm(live_settings, MagicMock(return_value=_completion(None, "cannot help")))
     with pytest.raises(ExtractionError, match="refused"):
         provider.extract("a" * 64, _pages(), "acta_constitutiva")
 
 
 def test_llm_invalid_json_raises(live_settings: Settings) -> None:
-    """Content that is not valid against the schema becomes ExtractionError."""
+    """Content that is not valid against the schema becomes ExtractionError.
+
+    Parameters
+    ----------
+    live_settings : object
+        Settings with a live API key configured.
+    """
     provider = _make_llm(live_settings, MagicMock(return_value=_completion("{not json")))
     with pytest.raises(ExtractionError, match="schema"):
         provider.extract("a" * 64, _pages(), "acta_constitutiva")
@@ -198,7 +225,15 @@ def test_llm_invalid_json_raises(live_settings: Settings) -> None:
 def test_llm_retries_transient_error_then_succeeds(
     live_settings: Settings, raw_extractions: dict[str, RawDeedExtraction]
 ) -> None:
-    """APIConnectionError is retried once and the next attempt succeeds."""
+    """APIConnectionError is retried once and the next attempt succeeds.
+
+    Parameters
+    ----------
+    live_settings : object
+        Settings with a live API key configured.
+    raw_extractions : object
+        Raw extraction payloads keyed by deed identifier.
+    """
     raw = raw_extractions["acta_a"]
     create = MagicMock(
         side_effect=[_connection_error(), _completion(raw.model_dump_json(by_alias=True))]
@@ -241,7 +276,13 @@ def _make_verifier(settings: Settings, create: MagicMock) -> OpenAIPredicateVeri
 
 
 def test_verifier_normalizes_yes_no_tokens(live_settings: Settings) -> None:
-    """Case and whitespace variants of YES/NO are pooled into P(YES)."""
+    """Case and whitespace variants of YES/NO are pooled into P(YES).
+
+    Parameters
+    ----------
+    live_settings : object
+        Settings with a live API key configured.
+    """
     tokens = [("YES", math.log(0.6)), (" yes", math.log(0.2)), ("No", math.log(0.2)), ("The", -1.0)]
     create = MagicMock(return_value=_logprob_completion(tokens))
     verifier = _make_verifier(live_settings, create)
@@ -251,7 +292,13 @@ def test_verifier_normalizes_yes_no_tokens(live_settings: Settings) -> None:
 
 
 def test_verifier_without_yes_no_raises(live_settings: Settings) -> None:
-    """Missing YES and NO candidates raises VerifierError."""
+    """Missing YES and NO candidates raises VerifierError.
+
+    Parameters
+    ----------
+    live_settings : object
+        Settings with a live API key configured.
+    """
     create = MagicMock(return_value=_logprob_completion([("Maybe", -0.1)]))
     verifier = _make_verifier(live_settings, create)
     with pytest.raises(VerifierError, match="neither"):

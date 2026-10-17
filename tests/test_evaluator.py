@@ -30,7 +30,15 @@ def _process_all(settings: Settings, sample_paths: dict[str, Path]) -> None:
 
 
 def test_perfect_outputs_score_one(settings: Settings, sample_paths: dict[str, Path]) -> None:
-    """Pipeline outputs on the synthetic deeds score 1.0 per acta."""
+    """Pipeline outputs on the synthetic deeds score 1.0 per acta.
+
+    Parameters
+    ----------
+    settings : object
+        Isolated workspace settings.
+    sample_paths : object
+        Generated sample PDF paths keyed by deed identifier.
+    """
     _process_all(settings, sample_paths)
     report = Evaluator(settings).evaluate()
     assert [doc.acta_id for doc in report.documents] == list(ACTA_IDS)
@@ -49,7 +57,15 @@ def test_perfect_outputs_score_one(settings: Settings, sample_paths: dict[str, P
 
 
 def test_expected_human_review_is_matched(settings: Settings, sample_paths: dict[str, Path]) -> None:
-    """Only Acta B is expected and flagged for capital review."""
+    """Only Acta B is expected and flagged for capital review.
+
+    Parameters
+    ----------
+    settings : object
+        Isolated workspace settings.
+    sample_paths : object
+        Generated sample PDF paths keyed by deed identifier.
+    """
     _process_all(settings, sample_paths)
     report = Evaluator(settings).evaluate()
     by_id = {doc.acta_id: doc for doc in report.documents}
@@ -62,7 +78,17 @@ def test_expected_human_review_is_matched(settings: Settings, sample_paths: dict
 def test_revoked_representative_is_critical_false_positive(
     settings: Settings, sample_paths: dict[str, Path], audit_log_path: Path
 ) -> None:
-    """Re-injecting the revoked representative costs 0.25 and logs CRITICAL_RISK."""
+    """Re-injecting the revoked representative costs 0.25 and logs CRITICAL_RISK.
+
+    Parameters
+    ----------
+    settings : object
+        Isolated workspace settings.
+    sample_paths : object
+        Generated sample PDF paths keyed by deed identifier.
+    audit_log_path : object
+        Path of the isolated JSON Lines audit log.
+    """
     _process_all(settings, sample_paths)
     output_path = settings.outputs_dir / "acta_c.json"
     payload = json.loads(output_path.read_text(encoding="utf-8"))
@@ -92,7 +118,17 @@ def test_revoked_representative_is_critical_false_positive(
 def test_missing_output_scores_zero_without_crashing(
     settings: Settings, sample_paths: dict[str, Path], audit_log_path: Path
 ) -> None:
-    """A missing output file yields a zero-score evaluation for that acta only."""
+    """A missing output file yields a zero-score evaluation for that acta only.
+
+    Parameters
+    ----------
+    settings : object
+        Isolated workspace settings.
+    sample_paths : object
+        Generated sample PDF paths keyed by deed identifier.
+    audit_log_path : object
+        Path of the isolated JSON Lines audit log.
+    """
     _process_all(settings, sample_paths)
     (settings.outputs_dir / "acta_b.json").unlink()
     report = Evaluator(settings).evaluate()
@@ -109,7 +145,15 @@ def test_missing_output_scores_zero_without_crashing(
 
 
 def test_invalid_output_scores_zero(settings: Settings, sample_paths: dict[str, Path]) -> None:
-    """An output violating the schema is scored 0 instead of crashing."""
+    """An output violating the schema is scored 0 instead of crashing.
+
+    Parameters
+    ----------
+    settings : object
+        Isolated workspace settings.
+    sample_paths : object
+        Generated sample PDF paths keyed by deed identifier.
+    """
     _process_all(settings, sample_paths)
     (settings.outputs_dir / "acta_a.json").write_text('{"razon_social": 1}', encoding="utf-8")
     report = Evaluator(settings).evaluate()
@@ -117,7 +161,13 @@ def test_invalid_output_scores_zero(settings: Settings, sample_paths: dict[str, 
 
 
 def test_missing_ground_truth_raises(settings: Settings) -> None:
-    """Evaluating without ground truth raises EvaluationError."""
+    """Evaluating without ground truth raises EvaluationError.
+
+    Parameters
+    ----------
+    settings : object
+        Isolated workspace settings.
+    """
     from src.core.exceptions import EvaluationError
 
     settings.ground_truth_path.unlink()

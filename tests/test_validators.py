@@ -58,7 +58,17 @@ def _page_texts(settings: Settings, pdf_path: Path) -> dict[int, str]:
 def test_grounding_passes_for_native_acta(
     settings: Settings, sample_paths: dict[str, Path], raw_extractions: dict[str, RawDeedExtraction]
 ) -> None:
-    """Every Acta A quote is found on its cited page."""
+    """Every Acta A quote is found on its cited page.
+
+    Parameters
+    ----------
+    settings : object
+        Isolated workspace settings.
+    sample_paths : object
+        Generated sample PDF paths keyed by deed identifier.
+    raw_extractions : object
+        Raw extraction payloads keyed by deed identifier.
+    """
     model = raw_extractions["acta_a"]
     failures = verify_grounding(model, _page_texts(settings, sample_paths["acta_a"]))
     assert failures == []
@@ -70,7 +80,13 @@ def test_grounding_passes_for_native_acta(
 def test_grounding_is_accent_and_whitespace_insensitive(
     raw_extractions: dict[str, RawDeedExtraction],
 ) -> None:
-    """Accent, case and whitespace differences do not break grounding."""
+    """Accent, case and whitespace differences do not break grounding.
+
+    Parameters
+    ----------
+    raw_extractions : object
+        Raw extraction payloads keyed by deed identifier.
+    """
     model = raw_extractions["acta_c"]
     evidence = model.notario.evidence
     assert evidence is not None
@@ -90,7 +106,17 @@ def test_normalize_for_grounding() -> None:
 def test_grounding_failure_caps_confidence_and_flags_review(
     settings: Settings, sample_paths: dict[str, Path], raw_extractions: dict[str, RawDeedExtraction]
 ) -> None:
-    """A quote missing from its page is capped at 0.40 and flagged for review."""
+    """A quote missing from its page is capped at 0.40 and flagged for review.
+
+    Parameters
+    ----------
+    settings : object
+        Isolated workspace settings.
+    sample_paths : object
+        Generated sample PDF paths keyed by deed identifier.
+    raw_extractions : object
+        Raw extraction payloads keyed by deed identifier.
+    """
     model = raw_extractions["acta_a"]
     assert model.razon_social.evidence is not None
     model.razon_social.evidence.source_quote = "TEXTO COMPLETAMENTE INVENTADO QUE NO EXISTE EN EL DOCUMENTO"
@@ -107,7 +133,17 @@ def test_grounding_failure_caps_confidence_and_flags_review(
 def test_grounding_fails_when_cited_page_is_missing(
     settings: Settings, sample_paths: dict[str, Path], raw_extractions: dict[str, RawDeedExtraction]
 ) -> None:
-    """Evidence citing a page that does not exist fails the check."""
+    """Evidence citing a page that does not exist fails the check.
+
+    Parameters
+    ----------
+    settings : object
+        Isolated workspace settings.
+    sample_paths : object
+        Generated sample PDF paths keyed by deed identifier.
+    raw_extractions : object
+        Raw extraction payloads keyed by deed identifier.
+    """
     model = raw_extractions["acta_a"]
     assert model.numero_escritura.evidence is not None
     model.numero_escritura.evidence.page_number = 9
@@ -120,7 +156,17 @@ def test_grounding_fails_when_cited_page_is_missing(
 def test_grounding_checks_page_attribution(
     settings: Settings, sample_paths: dict[str, Path], raw_extractions: dict[str, RawDeedExtraction]
 ) -> None:
-    """A real quote cited on the wrong page fails the grounding check."""
+    """A real quote cited on the wrong page fails the grounding check.
+
+    Parameters
+    ----------
+    settings : object
+        Isolated workspace settings.
+    sample_paths : object
+        Generated sample PDF paths keyed by deed identifier.
+    raw_extractions : object
+        Raw extraction payloads keyed by deed identifier.
+    """
     model = raw_extractions["acta_c"]
     texts = _page_texts(settings, sample_paths["acta_c"])
     assert model.capital_social_actual.evidence is not None
@@ -145,26 +191,52 @@ def test_grounding_checks_page_attribution(
     ],
 )
 def test_spanish_amount_to_words(amount: float, words: str) -> None:
-    """Peso amounts are spelled in apocopated notarial Spanish."""
+    """Peso amounts are spelled in apocopated notarial Spanish.
+
+    Parameters
+    ----------
+    amount : object
+        Parametrized numeric amount.
+    words : object
+        Parametrized expected Spanish wording.
+    """
     assert spanish_amount_to_words(amount) == words
 
 
 @pytest.mark.parametrize("amount", [-1.0, 1_000_000_000.0, float("nan"), float("inf")])
 def test_spanish_amount_to_words_rejects_out_of_range(amount: float) -> None:
-    """Negative, huge and non-finite amounts raise ValueError."""
+    """Negative, huge and non-finite amounts raise ValueError.
+
+    Parameters
+    ----------
+    amount : object
+        Parametrized numeric amount.
+    """
     with pytest.raises(ValueError):
         spanish_amount_to_words(amount)
 
 
 def test_capital_consistency_match(raw_extractions: dict[str, RawDeedExtraction]) -> None:
-    """Matching numeric amount and words pass the consistency check."""
+    """Matching numeric amount and words pass the consistency check.
+
+    Parameters
+    ----------
+    raw_extractions : object
+        Raw extraction payloads keyed by deed identifier.
+    """
     model = raw_extractions["acta_a"]
     assert verify_capital_consistency(model) is True
     assert model.capital_social_actual.requires_human_review is False
 
 
 def test_capital_consistency_mismatch(raw_extractions: dict[str, RawDeedExtraction]) -> None:
-    """A numeric amount that disagrees with its words flags the capital field."""
+    """A numeric amount that disagrees with its words flags the capital field.
+
+    Parameters
+    ----------
+    raw_extractions : object
+        Raw extraction payloads keyed by deed identifier.
+    """
     model = raw_extractions["acta_a"]
     capital = model.capital_social_actual.value
     assert capital is not None
@@ -181,7 +253,13 @@ def test_capital_consistency_mismatch(raw_extractions: dict[str, RawDeedExtracti
 
 
 def test_confidence_routing_flags_low_confidence(raw_extractions: dict[str, RawDeedExtraction]) -> None:
-    """Evidence at 0.56 is flagged with the formatted threshold reason."""
+    """Evidence at 0.56 is flagged with the formatted threshold reason.
+
+    Parameters
+    ----------
+    raw_extractions : object
+        Raw extraction payloads keyed by deed identifier.
+    """
     model = raw_extractions["acta_a"]
     assert model.capital_social_actual.evidence is not None
     model.capital_social_actual.evidence.confidence_score = 0.56
@@ -195,7 +273,13 @@ def test_confidence_routing_flags_low_confidence(raw_extractions: dict[str, RawD
 def test_confidence_routing_preserves_existing_reason(
     raw_extractions: dict[str, RawDeedExtraction],
 ) -> None:
-    """With preserve_existing_reason an upstream reason is not extended."""
+    """With preserve_existing_reason an upstream reason is not extended.
+
+    Parameters
+    ----------
+    raw_extractions : object
+        Raw extraction payloads keyed by deed identifier.
+    """
     model = raw_extractions["acta_a"]
     assert model.capital_social_actual.evidence is not None
     model.capital_social_actual.evidence.confidence_score = 0.56
@@ -206,7 +290,13 @@ def test_confidence_routing_preserves_existing_reason(
 
 
 def test_confidence_routing_appends_without_preserve(raw_extractions: dict[str, RawDeedExtraction]) -> None:
-    """Without preserve_existing_reason the routing reason is appended."""
+    """Without preserve_existing_reason the routing reason is appended.
+
+    Parameters
+    ----------
+    raw_extractions : object
+        Raw extraction payloads keyed by deed identifier.
+    """
     model = raw_extractions["acta_a"]
     assert model.capital_social_actual.evidence is not None
     model.capital_social_actual.evidence.confidence_score = 0.56
@@ -218,7 +308,13 @@ def test_confidence_routing_appends_without_preserve(raw_extractions: dict[str, 
 
 
 def test_confidence_routing_flags_list_item_parent(raw_extractions: dict[str, RawDeedExtraction]) -> None:
-    """A low-confidence list item flags its parent list field."""
+    """A low-confidence list item flags its parent list field.
+
+    Parameters
+    ----------
+    raw_extractions : object
+        Raw extraction payloads keyed by deed identifier.
+    """
     model = raw_extractions["acta_a"]
     shareholders = model.socios.value or []
     shareholders[0].evidence.confidence_score = 0.30
@@ -237,7 +333,13 @@ def test_calibrate_predicate_confidence() -> None:
 
 @pytest.mark.parametrize("value", [-0.1, 1.1, float("nan"), float("inf")])
 def test_calibrate_predicate_confidence_rejects_invalid(value: float) -> None:
-    """Probabilities outside [0, 1] or non-finite raise ValueError."""
+    """Probabilities outside [0, 1] or non-finite raise ValueError.
+
+    Parameters
+    ----------
+    value : object
+        Parametrized input value.
+    """
     with pytest.raises(ValueError):
         calibrate_predicate_confidence(value)
 
@@ -253,7 +355,15 @@ def test_calibrate_predicate_confidence_rejects_non_numeric() -> None:
 def test_acta_b_capital_requires_review_with_exact_reason(
     settings: Settings, sample_paths: dict[str, Path]
 ) -> None:
-    """Acta B flags the capital with the exact spec reason and Decisions evidence."""
+    """Acta B flags the capital with the exact spec reason and Decisions evidence.
+
+    Parameters
+    ----------
+    settings : object
+        Isolated workspace settings.
+    sample_paths : object
+        Generated sample PDF paths keyed by deed identifier.
+    """
     result = build_orchestrator(settings, live=False).process_document(sample_paths["acta_b"])
     capital = result.output.capital_social_actual
     assert capital.requires_human_review is True
@@ -270,7 +380,15 @@ def test_acta_b_capital_requires_review_with_exact_reason(
 
 
 def test_pdf_inspector_routes_acta_a_native(settings: Settings, sample_paths: dict[str, Path]) -> None:
-    """Both pages of Acta A are native with full confidence."""
+    """Both pages of Acta A are native with full confidence.
+
+    Parameters
+    ----------
+    settings : object
+        Isolated workspace settings.
+    sample_paths : object
+        Generated sample PDF paths keyed by deed identifier.
+    """
     pages = PDFInspector(settings).inspect(sample_paths["acta_a"].read_bytes())
     assert [page.page_number for page in pages] == [1, 2]
     for page in pages:
@@ -282,7 +400,15 @@ def test_pdf_inspector_routes_acta_a_native(settings: Settings, sample_paths: di
 
 
 def test_pdf_inspector_routes_acta_b_hybrid(settings: Settings, sample_paths: dict[str, Path]) -> None:
-    """Acta B page 1 is native and page 2 is scanned with zero characters."""
+    """Acta B page 1 is native and page 2 is scanned with zero characters.
+
+    Parameters
+    ----------
+    settings : object
+        Isolated workspace settings.
+    sample_paths : object
+        Generated sample PDF paths keyed by deed identifier.
+    """
     pages = PDFInspector(settings).inspect(sample_paths["acta_b"].read_bytes())
     assert pages[0].source is PageSource.NATIVE_PDF
     assert pages[1].source is PageSource.SCANNED_PAGE
@@ -293,7 +419,13 @@ def test_pdf_inspector_routes_acta_b_hybrid(settings: Settings, sample_paths: di
 
 
 def test_pdf_inspector_rejects_garbage(settings: Settings) -> None:
-    """Bytes that are not a PDF raise PDFInspectionError."""
+    """Bytes that are not a PDF raise PDFInspectionError.
+
+    Parameters
+    ----------
+    settings : object
+        Isolated workspace settings.
+    """
     from src.core.exceptions import PDFInspectionError
 
     with pytest.raises(PDFInspectionError):

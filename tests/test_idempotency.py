@@ -240,13 +240,25 @@ def test_compute_sha256_rejects_empty_payload() -> None:
 
 
 def test_file_hash_equals_bytes_hash(sample_paths: dict[str, Path]) -> None:
-    """Streaming file hashing equals hashing the file bytes."""
+    """Streaming file hashing equals hashing the file bytes.
+
+    Parameters
+    ----------
+    sample_paths : object
+        Generated sample PDF paths keyed by deed identifier.
+    """
     for path in sample_paths.values():
         assert compute_file_sha256(path) == compute_sha256(path.read_bytes())
 
 
 def test_file_hash_missing_file_raises(tmp_path: Path) -> None:
-    """A missing file raises IngestionError."""
+    """A missing file raises IngestionError.
+
+    Parameters
+    ----------
+    tmp_path : object
+        Temporary directory provided by pytest.
+    """
     with pytest.raises(IngestionError):
         compute_file_sha256(tmp_path / "missing.pdf")
 
@@ -254,7 +266,15 @@ def test_file_hash_missing_file_raises(tmp_path: Path) -> None:
 def test_sample_regeneration_is_deterministic(
     tmp_path: Path, sample_paths: dict[str, Path]
 ) -> None:
-    """Generating the samples again yields identical SHA-256 digests."""
+    """Generating the samples again yields identical SHA-256 digests.
+
+    Parameters
+    ----------
+    tmp_path : object
+        Temporary directory provided by pytest.
+    sample_paths : object
+        Generated sample PDF paths keyed by deed identifier.
+    """
     other = Settings(project_root=tmp_path / "regen")
     regenerated = generate_synthetic_deeds(other)
     for deed in regenerated:
@@ -263,7 +283,15 @@ def test_sample_regeneration_is_deterministic(
 
 
 def test_cache_hit_skips_live_providers(settings: Settings, sample_paths: dict[str, Path]) -> None:
-    """A second run is a cache hit and the live LLM is never invoked."""
+    """A second run is a cache hit and the live LLM is never invoked.
+
+    Parameters
+    ----------
+    settings : object
+        Isolated workspace settings.
+    sample_paths : object
+        Generated sample PDF paths keyed by deed identifier.
+    """
     reference = FileSystemRepository(settings)
     cached, _, _, cached_llm = build_spy_bundle(reference)
     live, live_ocr, live_verifier, live_llm = build_spy_bundle(reference)
@@ -282,7 +310,17 @@ def test_cache_hit_skips_live_providers(settings: Settings, sample_paths: dict[s
 def test_repeated_runs_produce_identical_outputs(
     settings: Settings, sample_paths: dict[str, Path], acta_id: str
 ) -> None:
-    """Two runs yield identical outputs ignoring job_id and processing time."""
+    """Two runs yield identical outputs ignoring job_id and processing time.
+
+    Parameters
+    ----------
+    settings : object
+        Isolated workspace settings.
+    sample_paths : object
+        Generated sample PDF paths keyed by deed identifier.
+    acta_id : object
+        Parametrized deed identifier.
+    """
     orchestrator = build_orchestrator(settings, live=False)
     first = orchestrator.process_document(sample_paths[acta_id])
     first_json = json.loads(first.output_path.read_text(encoding="utf-8"))
@@ -295,7 +333,15 @@ def test_repeated_runs_produce_identical_outputs(
 
 
 def test_cache_miss_without_live_raises(settings: Settings, sample_paths: dict[str, Path]) -> None:
-    """Without a cache entry and without live providers CacheMissError is raised."""
+    """Without a cache entry and without live providers CacheMissError is raised.
+
+    Parameters
+    ----------
+    settings : object
+        Isolated workspace settings.
+    sample_paths : object
+        Generated sample PDF paths keyed by deed identifier.
+    """
     sha = compute_file_sha256(sample_paths["acta_a"])
     settings.cache_file_for(sha).unlink()
     orchestrator = build_orchestrator(settings, live=False)
@@ -307,7 +353,15 @@ def test_cache_miss_without_live_raises(settings: Settings, sample_paths: dict[s
 def test_process_all_records_cache_miss_failure(
     settings: Settings, sample_paths: dict[str, Path]
 ) -> None:
-    """process_all keeps going after a cache miss and records the failure."""
+    """process_all keeps going after a cache miss and records the failure.
+
+    Parameters
+    ----------
+    settings : object
+        Isolated workspace settings.
+    sample_paths : object
+        Generated sample PDF paths keyed by deed identifier.
+    """
     settings.cache_file_for(compute_file_sha256(sample_paths["acta_a"])).unlink()
     orchestrator = build_orchestrator(settings, live=False)
     results = orchestrator.process_all([sample_paths["acta_a"], sample_paths["acta_c"]])
@@ -319,7 +373,19 @@ def test_process_all_records_cache_miss_failure(
 def test_live_miss_persists_cache_and_second_run_hits(
     settings: Settings, tmp_path: Path, sample_paths: dict[str, Path], acta_id: str
 ) -> None:
-    """A live run on a cache miss writes a cache entry that the next run uses."""
+    """A live run on a cache miss writes a cache entry that the next run uses.
+
+    Parameters
+    ----------
+    settings : object
+        Isolated workspace settings.
+    tmp_path : object
+        Temporary directory provided by pytest.
+    sample_paths : object
+        Generated sample PDF paths keyed by deed identifier.
+    acta_id : object
+        Parametrized deed identifier.
+    """
     settings = replace(settings, openai_model="fake-live-model")
     reference = FileSystemRepository(settings)
     sha = compute_file_sha256(sample_paths[acta_id])

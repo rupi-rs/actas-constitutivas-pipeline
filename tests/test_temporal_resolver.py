@@ -46,7 +46,15 @@ from tests.conftest import read_audit_records
     ],
 )
 def test_normalize_person_name(raw: str, expected: str) -> None:
-    """Honorifics and accents are stripped while middle initials are kept."""
+    """Honorifics and accents are stripped while middle initials are kept.
+
+    Parameters
+    ----------
+    raw : object
+        Parametrized input value.
+    expected : object
+        Parametrized expected value.
+    """
     assert normalize_person_name(raw) == expected
 
 
@@ -97,7 +105,17 @@ def test_abbreviated_name_is_a_match() -> None:
 def test_acta_c_end_to_end_resolution(
     settings: Settings, raw_extractions: dict[str, RawDeedExtraction], audit_log_path: Path
 ) -> None:
-    """Acta C resolves to two active representatives, five powers and the 2024 capital."""
+    """Acta C resolves to two active representatives, five powers and the 2024 capital.
+
+    Parameters
+    ----------
+    settings : object
+        Isolated workspace settings.
+    raw_extractions : object
+        Raw extraction payloads keyed by deed identifier.
+    audit_log_path : object
+        Path of the isolated JSON Lines audit log.
+    """
     raw = raw_extractions["acta_c"]
     snapshot = raw.model_dump(mode="json")
     resolved = TemporalResolver(settings).resolve(raw, job_id="job-c", doc_sha256="c" * 64)
@@ -157,7 +175,17 @@ def test_acta_c_end_to_end_resolution(
 def test_actas_without_amendments_are_unchanged(
     settings: Settings, raw_extractions: dict[str, RawDeedExtraction], acta_id: str
 ) -> None:
-    """Acta A and B resolve to the same representatives, powers and capital."""
+    """Acta A and B resolve to the same representatives, powers and capital.
+
+    Parameters
+    ----------
+    settings : object
+        Isolated workspace settings.
+    raw_extractions : object
+        Raw extraction payloads keyed by deed identifier.
+    acta_id : object
+        Parametrized deed identifier.
+    """
     raw = raw_extractions[acta_id]
     resolved = TemporalResolver(settings).resolve(raw, job_id="job", doc_sha256="d" * 64)
     assert [rep.nombre for rep in resolved.representantes_legales.value or []] == [
@@ -172,7 +200,17 @@ def test_actas_without_amendments_are_unchanged(
 def test_appointment_after_revocation_is_kept(
     settings: Settings, raw_extractions: dict[str, RawDeedExtraction], audit_log_path: Path
 ) -> None:
-    """A representative appointed after the revocation date is not revoked."""
+    """A representative appointed after the revocation date is not revoked.
+
+    Parameters
+    ----------
+    settings : object
+        Isolated workspace settings.
+    raw_extractions : object
+        Raw extraction payloads keyed by deed identifier.
+    audit_log_path : object
+        Path of the isolated JSON Lines audit log.
+    """
     raw = raw_extractions["acta_c"]
     juan = next(rep for rep in raw.representantes_legales.value or [] if "JUAN" in rep.nombre)
     juan.fecha_nombramiento = "2025-01-15"
@@ -192,7 +230,15 @@ def test_appointment_after_revocation_is_kept(
 def test_namesake_revocation_is_flagged_not_applied(
     settings: Settings, raw_extractions: dict[str, RawDeedExtraction]
 ) -> None:
-    """A namesake with a different maternal surname triggers review, not removal."""
+    """A namesake with a different maternal surname triggers review, not removal.
+
+    Parameters
+    ----------
+    settings : object
+        Isolated workspace settings.
+    raw_extractions : object
+        Raw extraction payloads keyed by deed identifier.
+    """
     raw = raw_extractions["acta_c"]
     revocation = next(
         event for event in raw.amendment_history if event.event_type is AmendmentType.REVOCATION
