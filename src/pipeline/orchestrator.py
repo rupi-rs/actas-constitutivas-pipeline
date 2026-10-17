@@ -17,8 +17,9 @@ payload so that the next run is idempotent.
 A live run that meets a scanned page without the optional OCR engine fails
 that document fast with an explicit ``[ERROR]`` naming ``uv sync --extra
 ocr``; it never degrades silently. Pre-verified cache entries are never
-overwritten, and live results are not persisted when grounding or
-value-in-quote validation fails.
+overwritten, and live results are not persisted when grounding fails.
+Value-in-quote failures do not block persistence because that check is
+recomputed deterministically on every run.
 """
 
 from __future__ import annotations
@@ -92,7 +93,8 @@ _TEXT_MATCH_MIN_RATIO: float = 85.0
 _PREDICATE_QUOTE_LIMIT: int = 200
 _CAPITAL_FIELD: str = "capital_social_actual"
 _PRE_VERIFIED_MODEL_VERSION: str = "pre-verified-cache-v1"
-_MIN_CONTAINED_REGION_CHARS: int = 3
+_MIN_REGION_OVERLAP_CHARS: int = 3
+_REGION_SEPARATOR: str = " "
 
 
 class DocumentProcessingError(PipelineError):
@@ -223,6 +225,28 @@ class _LocatedRegion:
     bbox: BoundingBox
 
 
+@dataclass(frozen=True)
+class _EvidenceRef:
+    """One evidence together with the fields that depend on it.
+
+    Parameters
+    ----------
+    name : str
+        Contract field name, or ``amendment_history[i]`` for an event.
+    wrapper : FieldWithEvidence or None
+        Owning field for field and list-item evidence; ``None`` for events.
+    evidence : Evidence
+        The evidence object (mutated in place by anchoring and escalation).
+    dependents : tuple of FieldWithEvidence
+        Fields flagged for review when this evidence stays unreliable.
+    """
+
+    name: str
+    wrapper: Optional[FieldWithEvidence[Any]]
+    evidence: Evidence
+    dependents: tuple[FieldWithEvidence[Any], ...]
+
+
 class LazyOCRProvider(BaseOCRProvider):
     """OCR provider that defers engine construction to the first page.
 
@@ -317,33 +341,53 @@ def _union_bbox(regions: list[OCRRegion]) -> BoundingBox:
     )
 
 
-def _region_supports_quote(quote: str, region_text: str) -> bool:
-    """Decide whether one OCR region contributes to a normalized quote.
+def _quote_span_regions(quote: str, regions: list[OCRRegion]) -> list[OCRRegion]:
+    """Select the OCR regions that hold a normalized quote.
 
     Parameters
     ----------
     quote : str
         Normalized evidence quote.
-    region_text : str
-        Normalized OCR region text.
+    regions : list of OCRRegion
+        Page regions in reading order.
 
     Returns
     -------
-    bool
-        ``True`` when the region contains the quote, is contained in the
-        quote, or (quote shorter than region) fuzzily matches inside it.
+    list of OCRRegion
+        Consecutive regions whose character ranges intersect the span that
+        the quote aligns to in the joined page text; empty when the best
+        alignment scores below the fuzzy threshold.
+
+    Notes
+    -----
+    Region texts are normalized and joined with a single space.
+    ``rapidfuzz.fuzz.partial_ratio_alignment`` locates the quote in the joined
+    text, so unrelated short regions elsewhere on the page never contribute.
+    A region must overlap the span by at least ``min(len(region), 3)``
+    characters, which ignores one-character bleed at fuzzy alignment edges.
     """
-    if not region_text:
-        return False
-    if quote in region_text:
-        return True
-    if len(quote) < len(region_text):
-        return float(fuzz.partial_ratio(quote, region_text)) >= _TEXT_MATCH_MIN_RATIO
-    if len(region_text) < _MIN_CONTAINED_REGION_CHARS:
-        return False
-    if region_text in quote:
-        return True
-    return float(fuzz.partial_ratio(region_text, quote)) >= _TEXT_MATCH_MIN_RATIO
+    ranges: list[tuple[int, int, OCRRegion]] = []
+    parts: list[str] = []
+    cursor = 0
+    for region in regions:
+        text = _normalize_space(region.text)
+        if not text:
+            continue
+        ranges.append((cursor, cursor + len(text), region))
+        parts.append(text)
+        cursor += len(text) + len(_REGION_SEPARATOR)
+    if not ranges:
+        return []
+    alignment = fuzz.partial_ratio_alignment(quote, _REGION_SEPARATOR.join(parts))
+    if alignment is None or float(alignment.score) < _TEXT_MATCH_MIN_RATIO:
+        return []
+    span_start, span_end = alignment.dest_start, alignment.dest_end
+    selected: list[OCRRegion] = []
+    for start, end, region in ranges:
+        overlap = min(end, span_end) - max(start, span_start)
+        if overlap >= min(end - start, _MIN_REGION_OVERLAP_CHARS):
+            selected.append(region)
+    return selected
 
 
 def locate_evidence_region(ocr: OCRResult, evidence: Evidence) -> Optional[_LocatedRegion]:
@@ -361,17 +405,17 @@ def locate_evidence_region(ocr: OCRResult, evidence: Evidence) -> Optional[_Loca
     _LocatedRegion or None
         Minimum confidence over every region overlapping the evidence
         bounding box; when there is no box or no overlap, the minimum
-        confidence over every region contained in or overlapping the quote,
-        with the union bounding box. ``None`` if nothing matches.
+        confidence over the consecutive regions the quote aligns to, with
+        their union bounding box. ``None`` if nothing matches.
 
     Notes
     -----
     A multi-line quote spans several OCR lines; using the minimum keeps a
     single low-confidence line (for example an amount under a seal) from
-    being masked by clean neighbouring lines. Region text is the needle
-    when it is no longer than the quote; the quote is the needle only when
-    it is shorter than the region. Fuzzy matching uses
-    ``rapidfuzz.fuzz.partial_ratio`` at 85 or above.
+    being masked by clean neighbouring lines. Regions are chosen by the
+    character span of the quote inside the joined page text, found with
+    ``rapidfuzz.fuzz.partial_ratio_alignment`` at 85 or above, so unrelated
+    short regions elsewhere on the page do not affect the result.
     """
     if evidence.bounding_box is not None:
         overlapping: list[OCRRegion] = [
@@ -385,11 +429,7 @@ def locate_evidence_region(ocr: OCRResult, evidence: Evidence) -> Optional[_Loca
     quote = _normalize_space(evidence.source_quote)
     if not quote:
         return None
-    matched = [
-        region
-        for region in ocr.regions
-        if _region_supports_quote(quote, _normalize_space(region.text))
-    ]
+    matched = _quote_span_regions(quote, ocr.regions)
     if not matched:
         return None
     return _LocatedRegion(
@@ -761,6 +801,7 @@ class PipelineOrchestrator:
             message=f"escalation completed ({escalated} evidences verified)",
         )
 
+        self._route_amendment_confidence(resolved, context)
         apply_confidence_routing(
             resolved,
             self._settings.review_confidence_threshold,
@@ -770,7 +811,7 @@ class PipelineOrchestrator:
         )
 
         if not cache_hit:
-            if failures or value_failures:
+            if failures:
                 log_event(
                     _LOGGER,
                     tag=StatusTag.WARN,
@@ -778,14 +819,8 @@ class PipelineOrchestrator:
                     stage="persistence",
                     job_id=context.job_id,
                     doc_sha256=context.doc_sha256,
-                    details={
-                        "grounding_failures": len(failures),
-                        "value_in_quote_failures": len(value_failures),
-                    },
-                    message=(
-                        f"live result for {acta_id} not cached: grounding or "
-                        "value-in-quote validation failed"
-                    ),
+                    details={"grounding_failures": len(failures)},
+                    message=f"live result for {acta_id} not cached: grounding validation failed",
                 )
             else:
                 self._persist_cache(
@@ -1025,10 +1060,8 @@ class PipelineOrchestrator:
             return raw.model_copy(deep=True)
         return self._resolver.resolve(raw, job_id=context.job_id, doc_sha256=context.doc_sha256)
 
-    def _evidence_entries(
-        self, model: RawDeedExtraction
-    ) -> list[tuple[str, FieldWithEvidence[Any], Evidence]]:
-        """List every field and list-item evidence of a model.
+    def _evidence_entries(self, model: RawDeedExtraction) -> list[_EvidenceRef]:
+        """List every field, list-item and amendment event evidence.
 
         Parameters
         ----------
@@ -1037,23 +1070,59 @@ class PipelineOrchestrator:
 
         Returns
         -------
-        list of tuple
-            ``(field name, field, evidence)`` for each field evidence and
-            each list item evidence.
+        list of _EvidenceRef
+            One entry for each field evidence, each list item evidence and
+            each amendment event evidence. Event entries depend on the
+            fields their act type determines.
         """
-        entries: list[tuple[str, FieldWithEvidence[Any], Evidence]] = []
+        entries: list[_EvidenceRef] = []
         for name in type(model).model_fields:
             if name == "amendment_history":
                 continue
             wrapper: FieldWithEvidence[Any] = getattr(model, name)
             if wrapper.evidence is not None:
-                entries.append((name, wrapper, wrapper.evidence))
+                entries.append(_EvidenceRef(name, wrapper, wrapper.evidence, (wrapper,)))
             if name in LIST_FIELDS and isinstance(wrapper.value, list):
                 for item in wrapper.value:
                     item_evidence: Optional[Evidence] = getattr(item, "evidence", None)
                     if item_evidence is not None:
-                        entries.append((name, wrapper, item_evidence))
+                        entries.append(_EvidenceRef(name, wrapper, item_evidence, (wrapper,)))
+        for index, event in enumerate(model.amendment_history):
+            entries.append(
+                _EvidenceRef(
+                    f"amendment_history[{index}]",
+                    None,
+                    event.evidence,
+                    self._event_dependents(model, event.event_type),
+                )
+            )
         return entries
+
+    @staticmethod
+    def _event_dependents(
+        model: RawDeedExtraction, event_type: AmendmentType
+    ) -> tuple[FieldWithEvidence[Any], ...]:
+        """Return the fields whose value derives from an act type.
+
+        Parameters
+        ----------
+        model : RawDeedExtraction
+            Resolved extraction.
+        event_type : AmendmentType
+            Type of the amendment event.
+
+        Returns
+        -------
+        tuple of FieldWithEvidence
+            Revocations and grants affect representatives and powers, a
+            capital increase affects the current capital, the incorporation
+            affects the incorporation date.
+        """
+        if event_type in (AmendmentType.REVOCATION, AmendmentType.GRANT_OF_POWERS):
+            return (model.representantes_legales, model.poderes)
+        if event_type is AmendmentType.CAPITAL_INCREASE:
+            return (model.capital_social_actual,)
+        return (model.fecha_constitucion,)
 
     def _anchor_evidence(self, model: RawDeedExtraction, context: _DocumentContext) -> None:
         """Anchor evidence confidence to the actual extraction channel.
@@ -1072,7 +1141,8 @@ class PipelineOrchestrator:
         ``OCR_ENGINE`` and receives the region bounding box when missing, so
         live LLM output cannot self-assert confidence.
         """
-        for _, _, evidence in self._evidence_entries(model):
+        for ref in self._evidence_entries(model):
+            evidence = ref.evidence
             page = context.pages.get(evidence.page_number)
             if page is None:
                 continue
@@ -1108,7 +1178,7 @@ class PipelineOrchestrator:
         A field outside ``applicable_fields`` becomes ``no_aplicable`` with
         no value or evidence. A required field reported as ``extraido``
         without a value or without any evidence becomes ``no_encontrado``
-        and is flagged for human review.
+        with its value and evidence cleared, and is flagged for human review.
         """
         for name in type(model).model_fields:
             if name == "amendment_history":
@@ -1133,6 +1203,8 @@ class PipelineOrchestrator:
                 else f"Required field {name} has no supporting evidence"
             )
             wrapper.status = FieldStatus.NOT_FOUND
+            wrapper.value = None
+            wrapper.evidence = None
             wrapper.flag_for_review(reason)
             log_event(
                 _LOGGER,
@@ -1146,7 +1218,7 @@ class PipelineOrchestrator:
             )
 
     def _build_predicate(
-        self, name: str, wrapper: FieldWithEvidence[Any], evidence: Evidence
+        self, name: str, wrapper: Optional[FieldWithEvidence[Any]], evidence: Evidence
     ) -> str:
         """Build the Tier 2 predicate for an evidence.
 
@@ -1154,8 +1226,8 @@ class PipelineOrchestrator:
         ----------
         name : str
             Contract field name.
-        wrapper : FieldWithEvidence
-            The field containing the evidence.
+        wrapper : FieldWithEvidence or None
+            The field containing the evidence; ``None`` for amendment events.
         evidence : Evidence
             Evidence to verify.
 
@@ -1165,7 +1237,7 @@ class PipelineOrchestrator:
             Capital predicate for ``capital_social_actual``; otherwise a
             reading-accuracy predicate over the evidence quote.
         """
-        if name == _CAPITAL_FIELD and wrapper.value is not None:
+        if name == _CAPITAL_FIELD and wrapper is not None and wrapper.value is not None:
             amount = float(wrapper.value.monto_numerico)
             return (
                 f"The capital social amount on page {evidence.page_number} "
@@ -1202,7 +1274,8 @@ class PipelineOrchestrator:
         ``verifier_confidence_threshold`` flags the field for human review.
         """
         verified_count = 0
-        for name, wrapper, evidence in self._evidence_entries(model):
+        for ref in self._evidence_entries(model):
+            name, wrapper, evidence = ref.name, ref.wrapper, ref.evidence
             page = context.pages.get(evidence.page_number)
             ocr = context.ocr_results.get(evidence.page_number)
             if page is None or ocr is None or page.source is not PageSource.SCANNED_PAGE:
@@ -1268,7 +1341,8 @@ class PipelineOrchestrator:
                     f"overlapping notary seal on page {evidence.page_number} bbox "
                     f"[{bbox.x1:.1f}, {bbox.y1:.1f}, {bbox.x2:.1f}, {bbox.y2:.1f}]."
                 )
-                wrapper.flag_for_review(reason)
+                for dependent in ref.dependents:
+                    dependent.flag_for_review(reason)
                 log_event(
                     _LOGGER,
                     tag=StatusTag.REVIEW_REQUIRED,
@@ -1291,6 +1365,60 @@ class PipelineOrchestrator:
                     ),
                 )
         return verified_count
+
+    def _route_amendment_confidence(
+        self, model: RawDeedExtraction, context: _DocumentContext
+    ) -> list[str]:
+        """Flag fields that depend on a low-confidence amendment event.
+
+        Parameters
+        ----------
+        model : RawDeedExtraction
+            Resolved extraction (review flags mutated in place).
+        context : _DocumentContext
+            Working state (job and hash).
+
+        Returns
+        -------
+        list of str
+            Locations of the amendment events that were below the threshold.
+
+        Notes
+        -----
+        Runs after escalation, so an event that the verifier did not lift
+        above ``review_confidence_threshold`` flags its dependent fields:
+        revocation and grant events flag ``representantes_legales`` and
+        ``poderes``, capital increases flag ``capital_social_actual`` and the
+        incorporation flags ``fecha_constitucion``.
+        """
+        threshold = self._settings.review_confidence_threshold
+        flagged: list[str] = []
+        for ref in self._evidence_entries(model):
+            if ref.wrapper is not None or ref.evidence.confidence_score >= threshold:
+                continue
+            reason = (
+                f"Low confidence score ({ref.evidence.confidence_score:.2f} < {threshold:.2f}) "
+                f"on {ref.name} evidence, page {ref.evidence.page_number}"
+            )
+            for dependent in ref.dependents:
+                dependent.flag_for_review(reason)
+            flagged.append(ref.name)
+            log_event(
+                _LOGGER,
+                tag=StatusTag.REVIEW_REQUIRED,
+                event="amendment_low_confidence",
+                stage="escalation",
+                job_id=context.job_id,
+                doc_sha256=context.doc_sha256,
+                details={
+                    "event": ref.name,
+                    "page_number": ref.evidence.page_number,
+                    "confidence": ref.evidence.confidence_score,
+                    "threshold": threshold,
+                },
+                message=f"{ref.name}: {reason}",
+            )
+        return flagged
 
     def _persist_cache(
         self,
