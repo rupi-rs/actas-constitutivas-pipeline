@@ -128,13 +128,16 @@ class EvaluationReport(BaseModel):
     documents : list of DocumentEvaluation
         Per-document results.
     overall_score : float
-        Mean final score.
+        Mean final score minus ``global_penalty`` (floor 0).
     overall_evidence_hit_rate : float
         Mean evidence hit rate.
     total_critical_false_positives : int
         Sum of critical false positives.
     generated_at : str
         ISO 8601 UTC timestamp.
+    global_penalty : float, default 0.0
+        Penalty applied once to ``overall_score`` when any critical false
+        positive exists (spec 03: -0.25 to the global score).
     """
 
     documents: list[DocumentEvaluation]
@@ -142,6 +145,7 @@ class EvaluationReport(BaseModel):
     overall_evidence_hit_rate: float
     total_critical_false_positives: int
     generated_at: str
+    global_penalty: float = 0.0
 
 
 def _r(value: float) -> float:
@@ -420,14 +424,17 @@ class Evaluator:
         truth = self._load_ground_truth()
         documents = [self._evaluate_document(acta_id, entry) for acta_id, entry in truth.items()]
         count = len(documents)
-        overall = sum(d.final_score for d in documents) / count
+        total_fp = sum(d.critical_false_positives for d in documents)
+        global_penalty = CRITICAL_FP_PENALTY if total_fp > 0 else 0.0
+        overall = max(0.0, sum(d.final_score for d in documents) / count - global_penalty)
         hit_rate = sum(d.evidence_hit_rate for d in documents) / count
         report = EvaluationReport(
             documents=documents,
             overall_score=_r(overall),
             overall_evidence_hit_rate=_r(hit_rate),
-            total_critical_false_positives=sum(d.critical_false_positives for d in documents),
+            total_critical_false_positives=total_fp,
             generated_at=datetime.now(timezone.utc).isoformat(),
+            global_penalty=global_penalty,
         )
         save_json(self._settings.outputs_dir / REPORT_FILENAME, report.model_dump(mode="json"))
         log_event(
@@ -438,6 +445,7 @@ class Evaluator:
             details={
                 "documents": count,
                 "overall_score": report.overall_score,
+                "global_penalty": report.global_penalty,
                 "overall_evidence_hit_rate": report.overall_evidence_hit_rate,
                 "total_critical_false_positives": report.total_critical_false_positives,
             },

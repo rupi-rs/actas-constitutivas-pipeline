@@ -43,6 +43,7 @@ def test_perfect_outputs_score_one(settings: Settings, sample_paths: dict[str, P
         assert doc.human_review_match is True
         assert all(score.passed for score in doc.field_scores)
     assert report.overall_score == 1.0
+    assert report.global_penalty == 0.0
     assert report.total_critical_false_positives == 0
     assert (settings.outputs_dir / "evaluation_report.json").is_file()
 
@@ -79,6 +80,9 @@ def test_revoked_representative_is_critical_false_positive(
     assert acta_c.penalty == 0.25 == CRITICAL_FP_PENALTY
     assert acta_c.final_score == pytest.approx(max(0.0, acta_c.weighted_score - 0.25), abs=1e-3)
     assert report.total_critical_false_positives == 1
+    mean_final = sum(doc.final_score for doc in report.documents) / len(report.documents)
+    assert report.global_penalty == CRITICAL_FP_PENALTY
+    assert report.overall_score == pytest.approx(max(0.0, mean_final - 0.25), abs=1e-3)
     records = [r for r in read_audit_records(audit_log_path) if r["tag"] == "CRITICAL_RISK"]
     assert len(records) == 1
     assert records[0]["event"] == "critical_false_positive"
