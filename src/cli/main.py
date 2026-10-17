@@ -25,7 +25,8 @@ from src.core.exceptions import PipelineError, UnknownDocumentTypeError
 from src.core.logger import StatusTag, configure_logging, redact_text
 from src.core.registry import ACTA_CONSTITUTIVA, DocumentRegistry
 from src.pipeline.orchestrator import ProcessingResult, build_orchestrator
-from src.schemas.deed_models import AmendmentType
+from src.pipeline.resolver import normalize_person_name, person_similarity, split_revocation_subjects
+from src.schemas.deed_models import AmendmentEvent, AmendmentType
 
 app = typer.Typer(
     name="actas-cli",
@@ -35,6 +36,8 @@ app = typer.Typer(
 )
 
 _console = Console(highlight=False, width=max(110, shutil.get_terminal_size(fallback=(120, 24)).columns))
+
+_SUBJECT_MATCH_MIN_SIMILARITY: float = 70.0
 
 _TAG_STYLES: dict[str, str] = {
     "INFO": "",
@@ -230,6 +233,98 @@ def _generate_samples(settings: Settings) -> bool:
     return True
 
 
+def _subject_applied(subject: str, matched_names: list[str]) -> bool:
+    """Decide whether a revocation subject corresponds to a revoked person.
+
+    Parameters
+    ----------
+    subject : str
+        One person named by the revocation act.
+    matched_names : list of str
+        Names of the representatives the resolver revoked for the event.
+
+    Returns
+    -------
+    bool
+        ``True`` when the normalized subject is similar to, or token-contained
+        in, one of the matched names.
+    """
+    subject_norm = normalize_person_name(subject)
+    subject_tokens = set(subject_norm.split())
+    for name in matched_names:
+        name_norm = normalize_person_name(name)
+        if person_similarity(subject_norm, name_norm) >= _SUBJECT_MATCH_MIN_SIMILARITY:
+            return True
+        if subject_tokens and subject_tokens <= set(name_norm.split()):
+            return True
+    return False
+
+
+def _revocation_lines(
+    acta_id: str, event: AmendmentEvent, review_reason: Optional[str]
+) -> list[tuple[StatusTag, str]]:
+    """Build the status lines describing one revocation event.
+
+    Parameters
+    ----------
+    acta_id : str
+        Document identifier.
+    event : AmendmentEvent
+        ``REVOCATION`` event after temporal resolution.
+    review_reason : str or None
+        Review reason of ``representantes_legales``, explaining why a
+        revocation was not applied.
+
+    Returns
+    -------
+    list of tuple of (StatusTag, str)
+        One ``REVOKED`` line per matched person and one ``WARN`` line when
+        the event, or some of its subjects, were not applied.
+
+    Notes
+    -----
+    Lines are redacted when rendered by :func:`_say`.
+    """
+    reference = f"deed {event.numero_escritura}, {event.fecha_acto}"
+    reason = review_reason or "no matching active representative was found"
+    if event.matched_canonical_entity is None:
+        return [
+            (
+                StatusTag.WARN,
+                f"{acta_id}: revocation of {event.sujeto_afectado} not applied "
+                f"({reference}); {reason}",
+            )
+        ]
+    matched = [name.strip() for name in event.matched_canonical_entity.split("; ") if name.strip()]
+    score = f"{event.fuzzy_match_score:.2f}" if event.fuzzy_match_score is not None else "n/a"
+    subjects = split_revocation_subjects(event.sujeto_afectado or "")
+    if len(matched) == 1 and len(subjects) <= 1:
+        return [
+            (
+                StatusTag.REVOKED,
+                f"{acta_id}: {event.sujeto_afectado} matched {matched[0]} "
+                f"(similarity {score}, {reference}); removed from active representatives",
+            )
+        ]
+    lines: list[tuple[StatusTag, str]] = [
+        (
+            StatusTag.REVOKED,
+            f"{acta_id}: {name} removed from active representatives "
+            f"(similarity {score}, {reference})",
+        )
+        for name in matched
+    ]
+    for subject in subjects:
+        if not _subject_applied(subject, matched):
+            lines.append(
+                (
+                    StatusTag.WARN,
+                    f"{acta_id}: revocation of {subject} not applied ({reference}); {reason}",
+                )
+            )
+    return lines
+
+
 def _render_results(results: list[ProcessingResult]) -> None:
     """Render the processing summary and per-document notices.
 
@@ -270,24 +365,12 @@ def _render_results(results: list[ProcessingResult]) -> None:
     _console.print(table)
     for result in results:
         output = result.output
+        reason = output.representantes_legales.review_reason
         for event in output.amendment_history:
             if event.event_type is not AmendmentType.REVOCATION:
                 continue
-            if event.matched_canonical_entity is None:
-                _say(
-                    StatusTag.WARN,
-                    f"{result.acta_id}: unmatched revocation of {event.sujeto_afectado} "
-                    f"(deed {event.numero_escritura}, {event.fecha_acto}); no active "
-                    "representative was removed",
-                )
-                continue
-            score = f"{event.fuzzy_match_score:.2f}" if event.fuzzy_match_score is not None else "n/a"
-            _say(
-                StatusTag.REVOKED,
-                f"{result.acta_id}: {event.sujeto_afectado} matched "
-                f"{event.matched_canonical_entity} (similarity {score}, "
-                f"deed {event.numero_escritura}, {event.fecha_acto}); removed from active representatives",
-            )
+            for tag, message in _revocation_lines(result.acta_id, event, reason):
+                _say(tag, message)
         for name in result.review_fields:
             field = getattr(output, name)
             _say(
