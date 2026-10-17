@@ -13,6 +13,12 @@ exists, OCR text, raw LLM extraction and verifier answers are served from it
 by deterministic providers and no live call is made, even in live mode.
 A cache miss in live mode runs the live providers and persists a new cache
 payload so that the next run is idempotent.
+
+A live run that meets a scanned page without the optional OCR engine fails
+that document fast with an explicit ``[ERROR]`` naming ``uv sync --extra
+ocr``; it never degrades silently. Pre-verified cache entries are never
+overwritten, and live results are not persisted when grounding or
+value-in-quote validation fails.
 """
 
 from __future__ import annotations
@@ -42,6 +48,8 @@ from src.pipeline.validators import (
     apply_confidence_routing,
     verify_capital_consistency,
     verify_grounding,
+    verify_temporal_consistency,
+    verify_value_in_quote,
 )
 from src.providers.interfaces import (
     BaseLLMProvider,
@@ -54,7 +62,11 @@ from src.providers.interfaces import (
     PageSource,
     VerifierResult,
 )
-from src.providers.llm_provider import CachedLLMProvider, build_llm_provider
+from src.providers.llm_provider import (
+    SYSTEM_PROMPT_SHA256,
+    CachedLLMProvider,
+    build_llm_provider,
+)
 from src.providers.ocr_provider import DeterministicOCRProvider, build_ocr_provider
 from src.providers.verifier_provider import (
     DeterministicVerifierProvider,
@@ -67,6 +79,7 @@ from src.schemas.deed_models import (
     ConfidenceSource,
     CorporateDeedOutput,
     Evidence,
+    FieldStatus,
     FieldWithEvidence,
     RawDeedExtraction,
 )
@@ -78,6 +91,8 @@ _JOB_ID_LENGTH: int = 12
 _TEXT_MATCH_MIN_RATIO: float = 85.0
 _PREDICATE_QUOTE_LIMIT: int = 200
 _CAPITAL_FIELD: str = "capital_social_actual"
+_PRE_VERIFIED_MODEL_VERSION: str = "pre-verified-cache-v1"
+_MIN_CONTAINED_REGION_CHARS: int = 3
 
 
 class DocumentProcessingError(PipelineError):
@@ -281,6 +296,56 @@ def _normalize_space(text: str) -> str:
     return " ".join(text.lower().split())
 
 
+def _union_bbox(regions: list[OCRRegion]) -> BoundingBox:
+    """Return the union bounding box of OCR regions.
+
+    Parameters
+    ----------
+    regions : list of OCRRegion
+        Non-empty list of regions.
+
+    Returns
+    -------
+    BoundingBox
+        Smallest box containing every region.
+    """
+    return BoundingBox(
+        x1=min(region.bbox.x1 for region in regions),
+        y1=min(region.bbox.y1 for region in regions),
+        x2=max(region.bbox.x2 for region in regions),
+        y2=max(region.bbox.y2 for region in regions),
+    )
+
+
+def _region_supports_quote(quote: str, region_text: str) -> bool:
+    """Decide whether one OCR region contributes to a normalized quote.
+
+    Parameters
+    ----------
+    quote : str
+        Normalized evidence quote.
+    region_text : str
+        Normalized OCR region text.
+
+    Returns
+    -------
+    bool
+        ``True`` when the region contains the quote, is contained in the
+        quote, or (quote shorter than region) fuzzily matches inside it.
+    """
+    if not region_text:
+        return False
+    if quote in region_text:
+        return True
+    if len(quote) < len(region_text):
+        return float(fuzz.partial_ratio(quote, region_text)) >= _TEXT_MATCH_MIN_RATIO
+    if len(region_text) < _MIN_CONTAINED_REGION_CHARS:
+        return False
+    if region_text in quote:
+        return True
+    return float(fuzz.partial_ratio(region_text, quote)) >= _TEXT_MATCH_MIN_RATIO
+
+
 def locate_evidence_region(ocr: OCRResult, evidence: Evidence) -> Optional[_LocatedRegion]:
     """Find the OCR region(s) supporting an evidence quote.
 
@@ -294,13 +359,18 @@ def locate_evidence_region(ocr: OCRResult, evidence: Evidence) -> Optional[_Loca
     Returns
     -------
     _LocatedRegion or None
-        Minimum confidence of the regions overlapping the evidence bounding
-        box; when there is no box or no overlap, the region whose text best
-        contains the quote. ``None`` if nothing matches.
+        Minimum confidence over every region overlapping the evidence
+        bounding box; when there is no box or no overlap, the minimum
+        confidence over every region contained in or overlapping the quote,
+        with the union bounding box. ``None`` if nothing matches.
 
     Notes
     -----
-    Text matching uses exact containment first and then
+    A multi-line quote spans several OCR lines; using the minimum keeps a
+    single low-confidence line (for example an amount under a seal) from
+    being masked by clean neighbouring lines. Region text is the needle
+    when it is no longer than the quote; the quote is the needle only when
+    it is shorter than the region. Fuzzy matching uses
     ``rapidfuzz.fuzz.partial_ratio`` at 85 or above.
     """
     if evidence.bounding_box is not None:
@@ -315,16 +385,16 @@ def locate_evidence_region(ocr: OCRResult, evidence: Evidence) -> Optional[_Loca
     quote = _normalize_space(evidence.source_quote)
     if not quote:
         return None
-    best: Optional[OCRRegion] = None
-    best_ratio = 0.0
-    for region in ocr.regions:
-        region_text = _normalize_space(region.text)
-        ratio = 100.0 if quote in region_text else float(fuzz.partial_ratio(quote, region_text))
-        if ratio > best_ratio:
-            best, best_ratio = region, ratio
-    if best is None or best_ratio < _TEXT_MATCH_MIN_RATIO:
+    matched = [
+        region
+        for region in ocr.regions
+        if _region_supports_quote(quote, _normalize_space(region.text))
+    ]
+    if not matched:
         return None
-    return _LocatedRegion(confidence=best.confidence, bbox=best.bbox)
+    return _LocatedRegion(
+        confidence=min(region.confidence for region in matched), bbox=_union_bbox(matched)
+    )
 
 
 class PipelineOrchestrator:
@@ -398,7 +468,11 @@ class PipelineOrchestrator:
         self.failures: list[ProcessingFailure] = []
 
     def process_all(
-        self, paths: list[Path], *, force_refresh: bool = False
+        self,
+        paths: list[Path],
+        *,
+        document_type: str = ACTA_CONSTITUTIVA,
+        force_refresh: bool = False,
     ) -> list[ProcessingResult]:
         """Process several documents, continuing past individual failures.
 
@@ -406,6 +480,8 @@ class PipelineOrchestrator:
         ----------
         paths : list of Path
             PDF files to process, in order.
+        document_type : str, default ACTA_CONSTITUTIVA
+            Registered document type applied to every path.
         force_refresh : bool, default False
             Forwarded to :meth:`process_document`.
 
@@ -424,7 +500,9 @@ class PipelineOrchestrator:
         results: list[ProcessingResult] = []
         for path in paths:
             try:
-                results.append(self.process_document(path, force_refresh=force_refresh))
+                results.append(self.process_document(
+                        path, document_type=document_type, force_refresh=force_refresh
+                    ))
             except PipelineError as exc:
                 self.failures.append(
                     ProcessingFailure(path=path, error_type=type(exc).__name__, message=exc.message)
@@ -633,20 +711,38 @@ class PipelineOrchestrator:
             job_id=context.job_id,
             doc_sha256=context.doc_sha256,
         )
+        value_failures = verify_value_in_quote(
+            resolved, job_id=context.job_id, doc_sha256=context.doc_sha256
+        )
+        temporal_failures = verify_temporal_consistency(
+            resolved, job_id=context.job_id, doc_sha256=context.doc_sha256
+        )
         consistent = verify_capital_consistency(
             resolved, job_id=context.job_id, doc_sha256=context.doc_sha256
         )
+        self._enforce_spec(resolved, spec, context)
         log_event(
             _LOGGER,
-            tag=StatusTag.OK if not failures and consistent else StatusTag.WARN,
+            tag=(
+                StatusTag.OK
+                if not failures and not value_failures and not temporal_failures and consistent
+                else StatusTag.WARN
+            ),
             event="validation_completed",
             stage="validation",
             job_id=context.job_id,
             doc_sha256=context.doc_sha256,
             duration_ms=self._elapsed(stage_start),
-            details={"grounding_failures": len(failures), "capital_consistent": consistent},
+            details={
+                "grounding_failures": len(failures),
+                "value_in_quote_failures": len(value_failures),
+                "temporal_failures": len(temporal_failures),
+                "capital_consistent": consistent,
+            },
             message=(
                 f"validation completed: {len(failures)} grounding failures, "
+                f"{len(value_failures)} value-in-quote failures, "
+                f"{len(temporal_failures)} temporal failures, "
                 f"capital {'consistent' if consistent else 'inconsistent'}"
             ),
         )
@@ -674,7 +770,27 @@ class PipelineOrchestrator:
         )
 
         if not cache_hit:
-            self._persist_cache(pdf_path, acta_id, document_type, model_version, raw_snapshot, context)
+            if failures or value_failures:
+                log_event(
+                    _LOGGER,
+                    tag=StatusTag.WARN,
+                    event="cache_not_written",
+                    stage="persistence",
+                    job_id=context.job_id,
+                    doc_sha256=context.doc_sha256,
+                    details={
+                        "grounding_failures": len(failures),
+                        "value_in_quote_failures": len(value_failures),
+                    },
+                    message=(
+                        f"live result for {acta_id} not cached: grounding or "
+                        "value-in-quote validation failed"
+                    ),
+                )
+            else:
+                self._persist_cache(
+                    pdf_path, acta_id, document_type, model_version, raw_snapshot, context
+                )
 
         return self._finalize(
             pdf_path, acta_id, spec, resolved, model_version, cache_hit, context, started
@@ -736,6 +852,18 @@ class PipelineOrchestrator:
         stage_start = time.perf_counter()
         entry = self._repository.load_cache(context.doc_sha256)
         cached = entry is not None
+        if cached and self._live is not None and not self._is_current_entry(entry):
+            log_event(
+                _LOGGER,
+                tag=StatusTag.INFO,
+                event="cache_stale",
+                stage="idempotency",
+                job_id=context.job_id,
+                doc_sha256=context.doc_sha256,
+                details={"acta_id": acta_id},
+                message=f"cache entry for {acta_id} was produced by another model or prompt; treated as miss",
+            )
+            cached = False
         if cached and not force_refresh:
             log_event(
                 _LOGGER,
@@ -790,6 +918,30 @@ class PipelineOrchestrator:
             message=f"{'cache miss' if not cached else 'forced refresh'} for {acta_id}; using live providers",
         )
         return False, self._live
+
+    def _is_current_entry(self, entry: Optional[dict[str, Any]]) -> bool:
+        """Decide whether a cache entry may serve the live path.
+
+        Parameters
+        ----------
+        entry : dict or None
+            Loaded cache entry.
+
+        Returns
+        -------
+        bool
+            ``True`` for pre-verified entries and for live entries whose
+            prompt hash and model match the current configuration.
+        """
+        if entry is None:
+            return False
+        version = entry.get("model_version")
+        if version == _PRE_VERIFIED_MODEL_VERSION:
+            return True
+        return (
+            entry.get("prompt_sha256") == SYSTEM_PROMPT_SHA256
+            and version == f"openai:{self._settings.openai_model}"
+        )
 
     def _fill_ocr(
         self, inspected: list[PageContent], ocr: BaseOCRProvider, context: _DocumentContext
@@ -937,6 +1089,62 @@ class PipelineOrchestrator:
             evidence.confidence_score = located.confidence
             evidence.confidence_source = ConfidenceSource.OCR_ENGINE
 
+    def _enforce_spec(
+        self, model: RawDeedExtraction, spec: DocumentTypeSpec, context: _DocumentContext
+    ) -> None:
+        """Enforce the document type specification on the extraction.
+
+        Parameters
+        ----------
+        model : RawDeedExtraction
+            Resolved extraction (mutated in place).
+        spec : DocumentTypeSpec
+            Document type specification.
+        context : _DocumentContext
+            Working state (job and hash).
+
+        Notes
+        -----
+        A field outside ``applicable_fields`` becomes ``no_aplicable`` with
+        no value or evidence. A required field reported as ``extraido``
+        without a value or without any evidence becomes ``no_encontrado``
+        and is flagged for human review.
+        """
+        for name in type(model).model_fields:
+            if name == "amendment_history":
+                continue
+            wrapper: FieldWithEvidence[Any] = getattr(model, name)
+            if not spec.is_applicable(name):
+                wrapper.status = FieldStatus.NOT_APPLICABLE
+                wrapper.value = None
+                wrapper.evidence = None
+                continue
+            if not spec.is_required(name) or wrapper.status is not FieldStatus.EXTRACTED:
+                continue
+            items = wrapper.value if isinstance(wrapper.value, list) else []
+            has_evidence = wrapper.evidence is not None or any(
+                getattr(item, "evidence", None) is not None for item in items
+            )
+            if wrapper.value is not None and has_evidence:
+                continue
+            reason = (
+                f"Required field {name} has no extracted value"
+                if wrapper.value is None
+                else f"Required field {name} has no supporting evidence"
+            )
+            wrapper.status = FieldStatus.NOT_FOUND
+            wrapper.flag_for_review(reason)
+            log_event(
+                _LOGGER,
+                tag=StatusTag.REVIEW_REQUIRED,
+                event="required_field_missing",
+                stage="validation",
+                job_id=context.job_id,
+                doc_sha256=context.doc_sha256,
+                details={"field": name, "document_type": spec.document_type},
+                message=f"{name}: {reason}",
+            )
+
     def _build_predicate(
         self, name: str, wrapper: FieldWithEvidence[Any], evidence: Evidence
     ) -> str:
@@ -1045,7 +1253,12 @@ class PipelineOrchestrator:
                 )
                 verified_count += 1
             evidence.bounding_box = bbox
-            evidence.confidence_score = result.calibrated_confidence
+            if evidence.grounding_verified:
+                evidence.confidence_score = result.calibrated_confidence
+            else:
+                evidence.confidence_score = min(
+                    evidence.confidence_score, result.calibrated_confidence
+                )
             evidence.confidence_source = ConfidenceSource.DECISIONS_PREDICATE
             threshold = self._settings.verifier_confidence_threshold
             if result.calibrated_confidence < threshold:
@@ -1106,12 +1319,26 @@ class PipelineOrchestrator:
             Working state with OCR results and verifier answers.
         """
         stage_start = time.perf_counter()
+        existing = self._repository.load_cache(context.doc_sha256)
+        if existing is not None and existing.get("model_version") == _PRE_VERIFIED_MODEL_VERSION:
+            log_event(
+                _LOGGER,
+                tag=StatusTag.WARN,
+                event="cache_overwrite_refused",
+                stage="persistence",
+                job_id=context.job_id,
+                doc_sha256=context.doc_sha256,
+                details={"acta_id": acta_id},
+                message=f"pre-verified cache entry for {acta_id} kept; live result not persisted",
+            )
+            return
         payload: dict[str, Any] = {
             "doc_sha256": context.doc_sha256,
             "document_filename": pdf_path.name,
             "acta_id": acta_id,
             "document_type": document_type,
             "model_version": model_version,
+            "prompt_sha256": SYSTEM_PROMPT_SHA256,
             "raw_extraction": raw_snapshot,
             "ocr_pages": {
                 str(number): result.model_dump(mode="json")

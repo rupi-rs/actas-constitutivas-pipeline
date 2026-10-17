@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Optional
 
@@ -25,7 +26,7 @@ from src.providers.interfaces import (
     PageContent,
     VerifierResult,
 )
-from src.providers.llm_provider import CachedLLMProvider
+from src.providers.llm_provider import SYSTEM_PROMPT_SHA256, CachedLLMProvider
 from src.providers.ocr_provider import DeterministicOCRProvider
 from src.providers.verifier_provider import DeterministicVerifierProvider
 from src.schemas.deed_models import BoundingBox, RawDeedExtraction
@@ -68,7 +69,7 @@ class SpyLLM(BaseLLMProvider):
         """
         self.calls += 1
         raw, _ = self._delegate.extract(doc_sha256, pages, document_type)
-        return raw, "fake-live-model-v1"
+        return raw, "openai:fake-live-model"
 
 
 class SpyOCR(BaseOCRProvider):
@@ -319,6 +320,7 @@ def test_live_miss_persists_cache_and_second_run_hits(
     settings: Settings, tmp_path: Path, sample_paths: dict[str, Path], acta_id: str
 ) -> None:
     """A live run on a cache miss writes a cache entry that the next run uses."""
+    settings = replace(settings, openai_model="fake-live-model")
     reference = FileSystemRepository(settings)
     sha = compute_file_sha256(sample_paths[acta_id])
     reference_payload = json.loads(settings.cache_file_for(sha).read_text(encoding="utf-8"))
@@ -336,7 +338,8 @@ def test_live_miss_persists_cache_and_second_run_hits(
     persisted = json.loads(settings.cache_file_for(sha).read_text(encoding="utf-8"))
     assert persisted["doc_sha256"] == sha
     assert persisted["acta_id"] == acta_id
-    assert persisted["model_version"] == "fake-live-model-v1"
+    assert persisted["model_version"] == "openai:fake-live-model"
+    assert persisted["prompt_sha256"] == SYSTEM_PROMPT_SHA256
     assert persisted["raw_extraction"] == reference_payload["raw_extraction"]
     if acta_id == "acta_b":
         assert live_ocr.calls == 1
