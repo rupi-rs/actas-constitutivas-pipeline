@@ -20,3 +20,6 @@ outputs/
 setup_specs.py
 
 # Note: data/, study_guides/ and uv.lock are deliverables and are intentionally tracked.
+
+# Generated study material (kept local, not versioned)
+study_guides/
