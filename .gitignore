@@ -18,11 +18,10 @@ outputs/
 # Local tooling
 .DS_Store
 setup_specs.py
+PROMPT_EJECUCION_CLAUDE_CODE.md
 
-# Note: data/, study_guides/ and uv.lock are deliverables and are intentionally tracked.
+# Note: data/ and uv.lock are deliverables and are intentionally tracked.
 
-# Generated study material (kept local, not versioned)
+# Local-only study material and its generator sources
 study_guides/
-
-# Local-only study guide generator sources
 src/generators/study/
