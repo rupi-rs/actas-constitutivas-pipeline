@@ -6,6 +6,7 @@ directory and moved into place with ``os.replace``.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -64,10 +65,8 @@ def save_json(path: Path, payload: Any) -> Path:
         ) from exc
     finally:
         if tmp_name is not None:
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(tmp_name)
-            except OSError:
-                pass
     return target
 
 
