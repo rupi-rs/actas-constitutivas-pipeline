@@ -1,0 +1,22 @@
+# Python / uv build and cache artifacts
+.venv/
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# Environment and secrets
+.env
+
+# Runtime output
+logs/
+outputs/
+
+# Local tooling
+.DS_Store
+setup_specs.py
+
+# Note: data/, study_guides/ and uv.lock are deliverables and are intentionally tracked.
