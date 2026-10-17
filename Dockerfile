@@ -1,17 +1,8 @@
 # syntax=docker/dockerfile:1
 
-# Corporate Document Automation pipeline image.
-#
-# OpenShift runs containers under the restricted-v2 SCC, which assigns an
-# arbitrary non-root UID that belongs to GID 0 (root group). The image therefore:
-#   - runs as UID 1001 by default (non-root) but tolerates any UID in GID 0;
-#   - makes /app group-writable for GID 0 (chgrp -R 0 and chmod -R g=u), so the
-#     assigned UID can read the code and write data/, outputs/ and logs/;
-#   - sets HOME=/tmp so tools that write to $HOME have a writable location.
+# OpenShift restricted-v2 SCC assigns an arbitrary non-root UID in GID 0, so /app is group-writable (chgrp 0, g=u), HOME=/tmp and USER 1001.
 
-# ---------------------------------------------------------------------------
 # Builder stage: resolve and install locked dependencies with uv.
-# ---------------------------------------------------------------------------
 FROM registry.access.redhat.com/ubi9/python-312 AS builder
 
 USER 0
@@ -34,9 +25,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY . .
 RUN uv sync --frozen --no-dev
 
-# ---------------------------------------------------------------------------
 # Runtime stage: minimal surface, non-root by default, GID 0 writable.
-# ---------------------------------------------------------------------------
 FROM registry.access.redhat.com/ubi9/python-312
 
 LABEL org.opencontainers.image.title="actas-pipeline" \
@@ -50,7 +39,7 @@ COPY --from=builder /app /app
 
 USER 0
 
-RUN mkdir -p /app/data /app/outputs /app/logs /app/study_guides \
+RUN mkdir -p /app/data /app/outputs /app/logs \
  && chgrp -R 0 /app \
  && chmod -R g=u /app
 

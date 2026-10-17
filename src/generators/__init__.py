@@ -1,5 +1,4 @@
 """Synthetic artefact generators.
 
-Deterministic sample deed PDFs, ground truth, pre-verified caches and
-Spanish study guides.
+Deterministic sample deed PDFs, ground truth and pre-verified caches.
 """

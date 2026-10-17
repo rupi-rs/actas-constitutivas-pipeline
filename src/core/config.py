@@ -120,11 +120,6 @@ class Settings:
         return self.logs_dir / "pipeline_audit.jsonl"
 
     @property
-    def study_guides_dir(self) -> Path:
-        """Path: Spanish study guide PDFs directory (``study_guides``)."""
-        return self.project_root / "study_guides"
-
-    @property
     def live_mode_available(self) -> bool:
         """bool: ``True`` when a non-empty OpenAI API key is configured."""
         return bool(self.openai_api_key)

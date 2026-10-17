@@ -1,11 +1,16 @@
+# Local and build artifacts
 .venv
 **/__pycache__
 *.pyc
-logs
-outputs
 .git
-.env
 .mypy_cache
 .pytest_cache
-setup_specs.py
 .DS_Store
+logs
+outputs
+.env
+.env.*
+study_guides/
+src/generators/study/
+PROMPT_EJECUCION_CLAUDE_CODE.md
+setup_specs.py
