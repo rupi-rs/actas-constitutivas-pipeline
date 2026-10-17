@@ -1,16 +1,4 @@
-# OpenShift manifests for the Corporate Document Automation pipeline.
-#
-# The manifests carry no namespace; apply them into the target project with
-# `oc apply -f deploy/openshift-deployment.yaml -n <project>`.
-#
-# Create the OpenAI credentials out-of-band (do not store the key in git):
-#   oc create secret generic actas-openai --from-literal=OPENAI_API_KEY='<key>'
-# An empty key selects the deterministic pre-verified SHA-256 cache fallback.
-#
-# Workload note: the container runs a bounded batch (generate-samples, process-all)
-# and then keeps the pod alive with `exec sleep infinity` so the Deployment does
-# not enter CrashLoopBackOff. In production this command should be replaced by a
-# long-running worker that consumes a job queue.
+# Apply with `oc apply -f deploy/openshift-deployment.yaml -n <project>`; create the key first: oc create secret generic actas-openai --from-literal=OPENAI_API_KEY='<key>'
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -23,20 +11,6 @@ data:
   OPENAI_MODEL: "gpt-4o-2024-08-06"
   LOG_LEVEL: "INFO"
 ---
-# Template only. Applying this manifest overwrites an existing secret with an
-# empty value. Prefer `oc create secret` (see header) and remove this document
-# from the applied file once the secret exists.
-apiVersion: v1
-kind: Secret
-metadata:
-  name: actas-openai
-  labels:
-    app.kubernetes.io/name: actas-pipeline
-    app.kubernetes.io/part-of: corporate-document-automation
-type: Opaque
-stringData:
-  OPENAI_API_KEY: ""
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -47,7 +21,7 @@ metadata:
     app.kubernetes.io/part-of: corporate-document-automation
     app.kubernetes.io/version: "1.0.0"
 spec:
-  # Initial replica count; the HorizontalPodAutoscaler below owns the value at runtime.
+  # Initial replicas only; the HorizontalPodAutoscaler owns the count at runtime.
   replicas: 3
   revisionHistoryLimit: 5
   selector:
@@ -66,7 +40,7 @@ spec:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
-      # Bounds shutdown time, since `sleep` as PID 1 does not handle SIGTERM.
+      # Bounds shutdown time because sleep as PID 1 ignores SIGTERM.
       terminationGracePeriodSeconds: 10
       containers:
         - name: actas-pipeline
@@ -103,17 +77,17 @@ spec:
               memory: 1Gi
           livenessProbe:
             exec:
-              command: ["python", "-c", "import src.core.config"]
-            initialDelaySeconds: 10
-            periodSeconds: 30
-            timeoutSeconds: 5
+              command: ["actas-cli", "--help"]
+            initialDelaySeconds: 15
+            periodSeconds: 60
+            timeoutSeconds: 20
             failureThreshold: 3
           readinessProbe:
             exec:
-              command: ["python", "-c", "import src.core.config"]
-            initialDelaySeconds: 5
-            periodSeconds: 15
-            timeoutSeconds: 5
+              command: ["actas-cli", "--help"]
+            initialDelaySeconds: 15
+            periodSeconds: 60
+            timeoutSeconds: 20
             failureThreshold: 3
           volumeMounts:
             - name: tmp

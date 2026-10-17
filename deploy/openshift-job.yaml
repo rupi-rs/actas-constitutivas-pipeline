@@ -1,0 +1,73 @@
+# Run once with `oc apply -f deploy/openshift-job.yaml -n <project>` after the ConfigMap exists.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: actas-pipeline-demo
+  labels:
+    app.kubernetes.io/name: actas-pipeline
+    app.kubernetes.io/component: demo
+    app.kubernetes.io/part-of: corporate-document-automation
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: actas-pipeline
+        app.kubernetes.io/component: demo
+        app.kubernetes.io/part-of: corporate-document-automation
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: actas-pipeline
+          image: image-registry.openshift-image-registry.svc:5000/actas/actas-pipeline:1.0.0
+          imagePullPolicy: IfNotPresent
+          args: ["demo"]
+          envFrom:
+            - configMapRef:
+                name: actas-pipeline-config
+          env:
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: actas-openai
+                  key: OPENAI_API_KEY
+                  optional: true
+            - name: ACTAS_PROJECT_ROOT
+              value: /app
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: logs
+              mountPath: /app/logs
+            - name: outputs
+              mountPath: /app/outputs
+            - name: data
+              mountPath: /app/data
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: logs
+          emptyDir: {}
+        - name: outputs
+          emptyDir: {}
+        - name: data
+          emptyDir: {}

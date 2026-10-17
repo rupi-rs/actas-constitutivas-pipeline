@@ -9,7 +9,7 @@ services:
     env_file:
       - path: .env
         required: false
-    # Matches the non-root UID used by the image; GID 0 mirrors OpenShift behaviour.
+    # Non-root UID of the image with GID 0, mirroring OpenShift.
     user: "1001:0"
     read_only: true
     tmpfs:
