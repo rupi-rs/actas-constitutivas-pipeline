@@ -165,9 +165,7 @@ class GeneratedDeed:
     total_pages: int
 
 
-# ---------------------------------------------------------------------------
-# Text helpers
-# ---------------------------------------------------------------------------
+# Section: text helpers
 
 
 def normalize_whitespace(text: str) -> str:
@@ -240,9 +238,7 @@ def _wrap_words(text: str, max_width: float, measure: Any) -> list[str]:
     return lines
 
 
-# ---------------------------------------------------------------------------
-# Native page rendering
-# ---------------------------------------------------------------------------
+# Section: native page rendering
 
 
 def _draw_native_page(canvas: Canvas, page: NativePageSpec) -> None:
@@ -302,9 +298,7 @@ def _draw_native_page(canvas: Canvas, page: NativePageSpec) -> None:
     canvas.drawString(MARGIN_X, PAGE_HEIGHT - 760.0, page.footer)
 
 
-# ---------------------------------------------------------------------------
-# Raster page rendering
-# ---------------------------------------------------------------------------
+# Section: raster page rendering
 
 
 def _load_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
@@ -438,9 +432,7 @@ def render_raster_page(page: RasterPageSpec) -> Image.Image:
     return _draw_seal(image, page)
 
 
-# ---------------------------------------------------------------------------
-# PDF assembly and IO
-# ---------------------------------------------------------------------------
+# Section: pdf assembly and io
 
 
 def render_deed_pdf(spec: DeedSpec) -> bytes:
@@ -698,9 +690,7 @@ def generate_synthetic_deeds(settings: Settings) -> list[GeneratedDeed]:
     return results
 
 
-# ---------------------------------------------------------------------------
-# Self-checks
-# ---------------------------------------------------------------------------
+# Section: self-checks
 
 
 def iter_raw_evidence(raw: RawDeedExtraction) -> Iterator[tuple[str, Evidence]]:

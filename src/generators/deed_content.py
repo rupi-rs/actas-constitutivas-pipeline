@@ -207,9 +207,7 @@ class DeedSpec:
         return len(self.pages)
 
 
-# ---------------------------------------------------------------------------
-# Verbatim clauses mandated by spec 02
-# ---------------------------------------------------------------------------
+# Section: verbatim clauses mandated by spec 02
 
 A_P1_HEADER = "INSTRUMENTO PUBLICO NUMERO 45,120 (CUARENTA Y CINCO MIL CIENTO VEINTE)."
 A_P1_DATE_PLACE = (
@@ -391,9 +389,7 @@ def _signature(text: str) -> TextBlock:
     return TextBlock(text=text, style=BlockStyle.SIGNATURE)
 
 
-# ---------------------------------------------------------------------------
-# Page layouts
-# ---------------------------------------------------------------------------
+# Section: page layouts
 
 ACTA_A = DeedSpec(
     acta_id="acta_a",
@@ -661,9 +657,7 @@ DEED_SPECS: tuple[DeedSpec, ...] = (ACTA_A, ACTA_B, ACTA_C)
 """All synthetic deeds in generation order."""
 
 
-# ---------------------------------------------------------------------------
-# Raw extraction builders (pre-resolution, Appendix B semantics)
-# ---------------------------------------------------------------------------
+# Section: raw extraction builders (pre-resolution, appendix b semantics)
 
 
 def _bbox(coordinates: Optional[tuple[float, float, float, float]]) -> Optional[BoundingBox]:
@@ -1294,9 +1288,7 @@ RAW_EXTRACTION_BUILDERS: dict[str, Callable[[], RawDeedExtraction]] = {
 """Raw extraction builder per acta identifier."""
 
 
-# ---------------------------------------------------------------------------
-# OCR and verifier cache entries
-# ---------------------------------------------------------------------------
+# Section: ocr and verifier cache entries
 
 
 def build_ocr_result(page_number: int, page: RasterPageSpec) -> OCRResult:
@@ -1353,9 +1345,7 @@ def build_verifier_responses(spec: DeedSpec) -> list[dict[str, Any]]:
     ]
 
 
-# ---------------------------------------------------------------------------
-# Ground truth
-# ---------------------------------------------------------------------------
+# Section: ground truth
 
 
 def _scalar(value: Any, page: int) -> dict[str, Any]:
