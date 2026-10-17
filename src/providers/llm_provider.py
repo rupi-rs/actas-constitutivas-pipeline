@@ -9,6 +9,7 @@ check always run downstream.
 
 from __future__ import annotations
 
+import hashlib
 import time
 from typing import Any, Optional
 from xml.sax.saxutils import escape
@@ -27,9 +28,12 @@ from src.core.exceptions import CacheMissError, ExtractionError, StorageError
 from src.core.logger import StatusTag, get_logger, log_event
 from src.core.registry import DocumentRegistry
 from src.providers.interfaces import BaseLLMProvider, BaseStorageRepository, PageContent
-from src.schemas.deed_models import RawDeedExtraction
+from src.schemas.deed_models import RawDeedExtraction, openai_strict_json_schema
 
 _logger = get_logger("providers.llm")
+
+_REQUEST_TIMEOUT_SECONDS: float = 60.0
+_SCHEMA_NAME: str = "raw_deed_extraction"
 
 _TRANSIENT_ERRORS: tuple[type[Exception], ...] = (
     openai.APIConnectionError,
@@ -83,10 +87,13 @@ the notarized act normalized to YYYY-MM-DD in fecha_acto (convert dates written 
 words, for example "veinte de agosto del dos mil veinticuatro" becomes 2024-08-20), \
 the deed number as written in numero_escritura, and event_type one of \
 constitucion_original, aumento_capital, otorgamiento_poderes, revocacion_poderes. For \
-a revocation set sujeto_afectado to the person's name exactly as written in that act; \
+a revocation set sujeto_afectado to the name of exactly ONE person as written in that \
+act, and when one act revokes several people emit one separate revocacion_poderes event \
+per affected person, repeating the act date and deed number; keep any honorific such as \
+LIC., LICDA., ING., ARQ., C.P., DR., SR., SRA., DON or DONA exactly as written. \
 for a grant of powers set sujeto_afectado to the grantee as written; for capital \
 events set monto_nuevo to the new numeric capital. Leave matched_canonical_entity and \
-fuzzy_match_score null. Do not omit older events because a newer one exists. A \
+fuzzy_match_score null and revoked_appointment_evidence an empty list. Do not omit older events because a newer one exists. A \
 downstream deterministic Python resolver computes the current state from this history.
 
 PRE-RESOLUTION SEMANTICS
@@ -105,6 +112,9 @@ Return only the JSON object required by the schema. Use null for absent optional
 values. Monetary values are plain numbers in MXN without symbols or separators.\
 """
 """System prompt enforcing role, injection defense, grounding, status and events."""
+
+SYSTEM_PROMPT_SHA256: str = hashlib.sha256(SYSTEM_PROMPT.encode("utf-8")).hexdigest()
+"""SHA-256 of the system prompt, stored in live cache entries."""
 
 
 def build_pages_xml(pages: list[PageContent]) -> str:
@@ -226,7 +236,9 @@ class OpenAILLMProvider(BaseLLMProvider):
             raise ExtractionError("OPENAI_API_KEY is required for live extraction")
         self._model = settings.openai_model
         self._registry = registry
-        self._client = openai.OpenAI(api_key=settings.openai_api_key)
+        self._client = openai.OpenAI(
+            api_key=settings.openai_api_key, max_retries=0, timeout=_REQUEST_TIMEOUT_SECONDS
+        )
 
     @retry(
         retry=retry_if_exception_type(_TRANSIENT_ERRORS),
@@ -234,8 +246,8 @@ class OpenAILLMProvider(BaseLLMProvider):
         wait=wait_exponential(multiplier=1, min=1, max=8),
         reraise=True,
     )
-    def _parse(self, user_prompt: str) -> Any:
-        """Call the Structured Outputs endpoint with retries.
+    def _complete(self, user_prompt: str) -> Any:
+        """Call the chat completions endpoint with a strict JSON schema.
 
         Parameters
         ----------
@@ -245,18 +257,22 @@ class OpenAILLMProvider(BaseLLMProvider):
         Returns
         -------
         Any
-            SDK parsed completion.
+            SDK completion object.
         """
-        parse = getattr(self._client.chat.completions, "parse", None)
-        if parse is None:
-            parse = self._client.beta.chat.completions.parse
-        return parse(
+        return self._client.chat.completions.create(
             model=self._model,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
-            response_format=RawDeedExtraction,
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": _SCHEMA_NAME,
+                    "strict": True,
+                    "schema": openai_strict_json_schema(),
+                },
+            },
             temperature=0,
         )
 
@@ -287,14 +303,10 @@ class OpenAILLMProvider(BaseLLMProvider):
         started = time.perf_counter()
         prompt = build_user_prompt(build_pages_xml(pages), document_type, self._registry)
         try:
-            completion = self._parse(prompt)
+            completion = self._complete(prompt)
         except openai.OpenAIError as exc:
             raise ExtractionError(
                 "OpenAI extraction request failed", {"error": str(exc)}
-            ) from exc
-        except PydanticValidationError as exc:
-            raise ExtractionError(
-                "model output did not match the extraction schema", {"error": str(exc)}
             ) from exc
         try:
             message = completion.choices[0].message
@@ -303,9 +315,15 @@ class OpenAILLMProvider(BaseLLMProvider):
         refusal = getattr(message, "refusal", None)
         if refusal:
             raise ExtractionError("model refused the extraction request", {"refusal": str(refusal)})
-        parsed = getattr(message, "parsed", None)
-        if not isinstance(parsed, RawDeedExtraction):
-            raise ExtractionError("model output could not be parsed into the extraction schema")
+        content = getattr(message, "content", None)
+        if not isinstance(content, str) or not content.strip():
+            raise ExtractionError("model returned no content for the extraction request")
+        try:
+            parsed = RawDeedExtraction.model_validate_json(content)
+        except PydanticValidationError as exc:
+            raise ExtractionError(
+                "model output did not match the extraction schema", {"error": str(exc)}
+            ) from exc
         version = f"openai:{self._model}"
         log_event(
             _logger,

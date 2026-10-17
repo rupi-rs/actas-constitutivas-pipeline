@@ -136,8 +136,8 @@ class RapidOCRProvider(BaseOCRProvider):
             from rapidocr_onnxruntime import RapidOCR
         except ImportError as exc:
             raise OCRError(
-                "rapidocr-onnxruntime is not installed; install the optional 'ocr' extra "
-                "or use the deterministic OCR provider",
+                "rapidocr-onnxruntime is not installed; scanned pages cannot be recognised "
+                "live. Run 'uv sync --extra ocr' or process the document from its cache",
                 {"package": "rapidocr-onnxruntime"},
             ) from exc
         try:
