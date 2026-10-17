@@ -30,6 +30,15 @@ Resolution rules (CLAUDE.md section 5 rule 4, spec 03 section 1):
 - A ``sujeto_afectado`` naming several people is split and every person
   is evaluated separately; the appointment evidence of each revoked person
   is copied into ``revoked_appointment_evidence`` of the revocation event.
+  The unsplit subject is evaluated first, so a representative whose name
+  contains ``" Y "`` is not split apart.
+- Every subject of a ``REVOCATION`` or ``GRANT_OF_POWERS`` event must be
+  named by that event's own ``source_quote``; an unsupported revocation
+  subject is not applied and flags ``representantes_legales`` and
+  ``poderes`` (``revocation_subject_unsupported``).
+- Powers granted to a role (``"EL ADMINISTRADOR UNICO"``) follow the
+  revoked holder of that role, and any active power whose grantee is no
+  active representative (by name or role) flags ``poderes``.
 """
 
 from __future__ import annotations
@@ -74,8 +83,28 @@ _PREFIX_ALTERNATION: str = (
 )
 """Leading honorifics; multi-word and longer forms precede their prefixes so they win the alternation."""
 
-_LEADING_PREFIX_RE: re.Pattern[str] = re.compile(rf"^(?:(?:{_PREFIX_ALTERNATION})\b\.?\s*)+")
+_ARTICLE_ALTERNATION: str = "EL|LA|LOS|LAS|DEL|AL|Y"
+"""Articles and conjunctions that may precede an honorific (``"EL SR."``, ``"LIC. Y C.P."``)."""
+
+_LEADING_PREFIX_RE: re.Pattern[str] = re.compile(
+    rf"^(?:(?:(?:{_ARTICLE_ALTERNATION})\s+)?(?:{_PREFIX_ALTERNATION})\b\.?\s*)+"
+)
 _SUBJECT_SEPARATOR_RE: re.Pattern[str] = re.compile(r"\s*[,;]\s*|\s+Y\s+|\s+E\s+(?=H?I)")
+_LIST_SEPARATOR_RE: re.Pattern[str] = re.compile(r"\s*[,;]\s*")
+_ENTITY_SUFFIX_PATTERN: str = (
+    r"(?<![A-Z])(?:S\.?\s*A\.?\s*(?:P\.?\s*I\.?\s*)?(?:B\.?\s*)?|S\.?\s*DE\s+R\.?\s*L\.?\s*|"
+    r"S\.?\s*C\.?\s*|A\.?\s*C\.?\s*)(?:DE\s+C\.?\s*V\.?)?(?![A-Z])"
+)
+"""Mexican legal-entity suffixes (S.A., S.A.P.I., S.A.B., S. DE R.L., S.C., A.C., optionally DE C.V.)."""
+
+_ENTITY_SUFFIX_RE: re.Pattern[str] = re.compile(_ENTITY_SUFFIX_PATTERN)
+_JOB_TITLE_RE: re.Pattern[str] = re.compile(
+    r"^(?:(?:EL|LA)\s+)?(?:ADMINISTRADORA?\s+UNIC[OA]|ADMINISTRADORA?|APODERAD[OA](?:\s+(?:GENERAL|LEGAL|ESPECIAL))?|"
+    r"GERENTE(?:\s+GENERAL)?|DIRECTORA?(?:\s+GENERAL)?|PRESIDENTE|PRESIDENTA|SECRETARI[OA]|COMISARI[OA])\.?$"
+)
+"""Job-title fragments dropped from a revocation subject (``"..., ADMINISTRADORA UNICA"``)."""
+
+_ROLE_ARTICLE_RE: re.Pattern[str] = re.compile(r"^(?:(?:EL|LA|LOS|LAS|AL|DEL|A)\s+)+")
 _PUNCTUATION_RE: re.Pattern[str] = re.compile(r"[.,;\-]")
 _WHITESPACE_RE: re.Pattern[str] = re.compile(r"\s+")
 _PARENTHESIS_RE: re.Pattern[str] = re.compile(r"\(([^()]*)\)")
@@ -432,6 +461,102 @@ def extract_amount_in_words(source_quote: str, amount: Optional[float] = None) -
     return candidates[-1] if candidates else None
 
 
+def normalize_role(raw_role: str) -> str:
+    """Normalize a corporate role or a role-like power grantee for comparison.
+
+    Parameters
+    ----------
+    raw_role : str
+        Role as written (``"Administrador Unico"``) or a power grantee
+        written as a role (``"EL ADMINISTRADOR UNICO"``).
+
+    Returns
+    -------
+    str
+        Uppercase, accent-free text without punctuation and without
+        leading articles (``"ADMINISTRADOR UNICO"``).
+    """
+    text = strip_accents(raw_role.upper().strip())
+    text = _WHITESPACE_RE.sub(" ", _PUNCTUATION_RE.sub(" ", text)).strip()
+    return _ROLE_ARTICLE_RE.sub("", text).strip()
+
+
+def _normalize_quote(text: str) -> str:
+    """Normalize a source quote for subject-support checks.
+
+    Parameters
+    ----------
+    text : str
+        Verbatim quote.
+
+    Returns
+    -------
+    str
+        Uppercase, accent-free text with punctuation replaced by spaces
+        and whitespace collapsed.
+    """
+    upper = strip_accents(text.upper())
+    return _WHITESPACE_RE.sub(" ", re.sub(r"[^A-Z0-9\s]", " ", upper)).strip()
+
+
+SUBJECT_SUPPORT_PARTIAL_RATIO: float = 90.0
+"""Minimum ``partial_ratio`` of a subject against its quote when the surname tokens are not all present."""
+
+
+def subject_supported_by_quote(subject: str, source_quote: str) -> bool:
+    """Check that a revocation or grant subject is named by the event's own quote.
+
+    Parameters
+    ----------
+    subject : str
+        Raw name of one affected person (one fragment of ``sujeto_afectado``).
+    source_quote : str
+        ``evidence.source_quote`` of the same event.
+
+    Returns
+    -------
+    bool
+        ``True`` when every surname token of the normalized subject (the
+        last two tokens for names with three or more tokens, otherwise the
+        last token) occurs as a token of the normalized quote, or when
+        ``fuzz.partial_ratio(subject, quote) >=``
+        :data:`SUBJECT_SUPPORT_PARTIAL_RATIO`.
+
+    Notes
+    -----
+    The resolver runs before the grounding check, so this deterministic
+    guard prevents a subject that the quote does not mention from
+    revoking (or silently keeping) the wrong person.
+    """
+    subject_norm = normalize_person_name(subject)
+    quote_norm = _normalize_quote(source_quote)
+    tokens = subject_norm.split()
+    if not tokens or not quote_norm:
+        return False
+    surnames = tokens[-2:] if len(tokens) >= 3 else tokens[-1:]
+    quote_tokens = set(quote_norm.split())
+    if all(token in quote_tokens for token in surnames):
+        return True
+    return float(fuzz.partial_ratio(subject_norm, quote_norm)) >= SUBJECT_SUPPORT_PARTIAL_RATIO
+
+
+def _is_job_title(fragment: str) -> bool:
+    """Check whether a subject fragment is only a job title.
+
+    Parameters
+    ----------
+    fragment : str
+        Uppercase, accent-free fragment.
+
+    Returns
+    -------
+    bool
+        ``True`` for fragments such as ``"ADMINISTRADORA UNICA"`` or
+        ``"APODERADO GENERAL"``.
+    """
+    return _JOB_TITLE_RE.match(_WHITESPACE_RE.sub(" ", fragment.strip())) is not None
+
+
 def split_revocation_subjects(subject: str) -> list[str]:
     """Split a revocation subject naming several people into one name each.
 
@@ -453,18 +578,120 @@ def split_revocation_subjects(subject: str) -> list[str]:
     Separators are ``","``, ``";"``, the conjunction ``" Y "`` and the
     conjunction ``" E "`` when the next word starts with ``I`` or ``HI``
     (Spanish euphony rule). Splitting is evaluated on the uppercase,
-    accent-free text. If any fragment would have fewer than two name
-    tokens (for example a compound surname such as ``"PEREZ Y LOPEZ"``),
-    the whole subject is kept as a single name so that the matcher, and
-    not the splitter, decides.
+    accent-free text. Additional rules:
+
+    - A subject containing a legal-entity suffix (``S.A.``,
+      ``S.A. DE C.V.``, ``S. DE R.L.``, ``S.C.``, ``A.C.``) is split only on
+      ``","`` / ``";"`` (entity names often contain ``" Y "``), and a
+      fragment that is only a suffix is glued back to the previous one.
+    - Trailing job-title fragments (``"..., ADMINISTRADORA UNICA"``) are
+      dropped.
+    - Two comma-separated fragments where the first has two tokens and the
+      second one to three tokens are read as an inverted name
+      (``"PEREZ LOPEZ, JUAN CARLOS"`` -> ``"JUAN CARLOS PEREZ LOPEZ"``).
+    - If any fragment would have fewer than two name tokens (for example a
+      compound surname such as ``"PEREZ Y LOPEZ"``), the whole subject is
+      kept as a single name so that the matcher, and not the splitter,
+      decides.
+
+    The resolver evaluates the unsplit subject first (see
+    :func:`resolve_revocation_subjects`), so a representative whose name
+    contains ``" Y "`` is never split apart.
     """
     text = strip_accents(subject.upper().strip())
-    fragments = [fragment.strip() for fragment in _SUBJECT_SEPARATOR_RE.split(text) if fragment.strip()]
-    if len(fragments) < 2:
+    has_entity = _ENTITY_SUFFIX_RE.search(text) is not None
+    separator = _LIST_SEPARATOR_RE if has_entity else _SUBJECT_SEPARATOR_RE
+    fragments: list[str] = []
+    for fragment in (part.strip() for part in separator.split(text)):
+        if not fragment:
+            continue
+        if fragments and _ENTITY_SUFFIX_RE.fullmatch(fragment):
+            fragments[-1] = f"{fragments[-1]}, {fragment}"
+            continue
+        fragments.append(fragment)
+    dropped_title = False
+    if fragments and not _is_job_title(fragments[0]):
+        named = [fragment for fragment in fragments if not _is_job_title(fragment)]
+        dropped_title = len(named) < len(fragments)
+        fragments = named
+    if not fragments:
         return [subject]
+    if len(fragments) == 2 and not has_entity:
+        first_tokens = normalize_person_name(fragments[0]).split()
+        second_tokens = normalize_person_name(fragments[1]).split()
+        joined_by_comma = re.search(
+            rf"{re.escape(fragments[0])}\s*,\s*{re.escape(fragments[1])}", text
+        ) is not None
+        if joined_by_comma and len(first_tokens) == 2 and 1 <= len(second_tokens) <= 3:
+            return [" ".join([*second_tokens, *first_tokens])]
+    if len(fragments) < 2:
+        return fragments if dropped_title else [subject]
     if any(len(normalize_person_name(fragment).split()) < 2 for fragment in fragments):
         return [subject]
     return fragments
+
+
+def resolve_revocation_subjects(subject: str, candidate_names: list[str], threshold: float) -> list[str]:
+    """Choose how to read a revocation subject against the known representatives.
+
+    Parameters
+    ----------
+    subject : str
+        Raw ``sujeto_afectado``.
+    candidate_names : list of str
+        Normalized names of the currently active representatives.
+    threshold : float
+        Revocation similarity threshold.
+
+    Returns
+    -------
+    list of str
+        The person fragments to evaluate.
+
+    Notes
+    -----
+    Readings are tried in order: the unsplit subject, the output of
+    :func:`split_revocation_subjects` and the plain separator split. The
+    first reading in which every fragment is a ``MATCH`` for some
+    candidate wins; otherwise :func:`split_revocation_subjects` is used
+    and unmatched fragments are flagged downstream. This keeps names such
+    as ``"JUAN CARLOS PEREZ Y GOMEZ LOPEZ"`` whole when such a
+    representative exists.
+    """
+    default = split_revocation_subjects(subject)
+    text = strip_accents(subject.upper().strip())
+    plain = [fragment.strip() for fragment in _SUBJECT_SEPARATOR_RE.split(text) if fragment.strip()]
+    readings: list[list[str]] = []
+    for reading in ([subject], default, plain):
+        if reading and reading not in readings:
+            readings.append(reading)
+
+    def _all_match(reading: list[str]) -> bool:
+        """Return whether every fragment of a reading matches a candidate.
+
+        Parameters
+        ----------
+        reading : list of str
+            Person fragments.
+
+        Returns
+        -------
+        bool
+            ``True`` when each fragment is a ``MATCH`` for some candidate.
+        """
+        return all(
+            any(
+                classify_person_match(normalize_person_name(fragment), name, threshold).decision
+                is MatchDecision.MATCH
+                for name in candidate_names
+            )
+            for fragment in reading
+        )
+
+    for reading in readings:
+        if _all_match(reading):
+            return reading
+    return default
 
 
 _RevokedPair = tuple[LegalRepresentativeItem, PersonMatch]
@@ -680,6 +907,13 @@ class TemporalResolver:
             event.fuzzy_match_score = None
             event.revoked_appointment_evidence = []
         for event in model.amendment_history:
+            if event.event_type is AmendmentType.GRANT_OF_POWERS and event.sujeto_afectado:
+                for subject in split_revocation_subjects(event.sujeto_afectado):
+                    if not subject_supported_by_quote(subject, event.evidence.source_quote):
+                        self._flag_unsupported_subject(
+                            event, subject, model, job_id=job_id, doc_sha256=doc_sha256
+                        )
+                continue
             if event.event_type is not AmendmentType.REVOCATION:
                 continue
             if not event.sujeto_afectado:
@@ -688,18 +922,116 @@ class TemporalResolver:
                 )
                 continue
             event_revoked: list[_RevokedPair] = []
-            for subject in split_revocation_subjects(event.sujeto_afectado):
+            subjects = resolve_revocation_subjects(
+                event.sujeto_afectado, [rep.nombre_normalizado for rep in reps], self._threshold
+            )
+            for subject in subjects:
+                if not subject_supported_by_quote(subject, event.evidence.source_quote):
+                    self._flag_unsupported_subject(event, subject, model, job_id=job_id, doc_sha256=doc_sha256)
+                    continue
                 reps, powers, pairs = self._apply_single_revocation(
                     event, subject, reps, powers, model, job_id=job_id, doc_sha256=doc_sha256
                 )
                 event_revoked.extend(pairs)
             self._record_revocation_evidence(event, event_revoked)
             revoked_names.extend(rep.nombre for rep, _ in event_revoked)
+        self._flag_orphan_powers(reps, powers, model)
         if reps_field.value is not None:
             reps_field.value = reps
         if powers_field.value is not None:
             powers_field.value = powers
         return revoked_names
+
+    @staticmethod
+    def _flag_unsupported_subject(
+        event: AmendmentEvent, subject: str, model: RawDeedExtraction, *, job_id: str, doc_sha256: str
+    ) -> None:
+        """Flag an event subject that its own quote does not name.
+
+        Parameters
+        ----------
+        event : AmendmentEvent
+            ``REVOCATION`` or ``GRANT_OF_POWERS`` event.
+        subject : str
+            Raw name of the unsupported person.
+        model : RawDeedExtraction
+            Model whose ``representantes_legales`` and ``poderes`` fields
+            are flagged for review.
+        job_id : str
+            Job identifier for logging.
+        doc_sha256 : str
+            Document hash for logging.
+
+        Notes
+        -----
+        For a revocation the act is not applied for that subject, so the
+        person is neither silently removed nor silently kept.
+        """
+        if event.event_type is AmendmentType.REVOCATION:
+            reason = (
+                f"Revocation subject '{subject}' is not supported by the quote of deed "
+                f"{event.numero_escritura}; revocation not applied"
+            )
+            event_name = "revocation_subject_unsupported"
+        else:
+            reason = (
+                f"Grant subject '{subject}' is not supported by the quote of deed {event.numero_escritura}"
+            )
+            event_name = "grant_subject_unsupported"
+        model.representantes_legales.flag_for_review(reason)
+        model.poderes.flag_for_review(reason)
+        log_event(
+            _LOGGER,
+            tag=StatusTag.REVIEW_REQUIRED,
+            event=event_name,
+            stage=_STAGE,
+            job_id=job_id,
+            doc_sha256=doc_sha256,
+            details={
+                "subject": subject,
+                "deed": event.numero_escritura,
+                "event_type": event.event_type.value,
+                "page_number": event.evidence.page_number,
+            },
+        )
+
+    def _flag_orphan_powers(
+        self,
+        reps: list[LegalRepresentativeItem],
+        powers: list[PowerOfAttorneyItem],
+        model: RawDeedExtraction,
+    ) -> None:
+        """Flag active powers whose grantee is no active representative.
+
+        Parameters
+        ----------
+        reps : list of LegalRepresentativeItem
+            Active representatives after resolution.
+        powers : list of PowerOfAttorneyItem
+            Active powers after resolution.
+        model : RawDeedExtraction
+            Model whose ``poderes`` field receives review flags.
+
+        Notes
+        -----
+        A grantee is accounted for when it is a ``MATCH`` for an active
+        representative name or equals an active representative role after
+        :func:`normalize_role` (``"EL ADMINISTRADOR UNICO"``).
+        """
+        names = [rep.nombre_normalizado or normalize_person_name(rep.nombre) for rep in reps]
+        roles = {normalize_role(rep.cargo) for rep in reps if rep.cargo}
+        for power in powers:
+            grantee = normalize_person_name(power.otorgado_a)
+            if any(
+                classify_person_match(grantee, name, self._threshold).decision is MatchDecision.MATCH
+                for name in names
+            ):
+                continue
+            if normalize_role(power.otorgado_a) in roles:
+                continue
+            model.poderes.flag_for_review(
+                f"Power grantee '{power.otorgado_a}' does not match any active representative"
+            )
 
     @staticmethod
     def _record_revocation_evidence(event: AmendmentEvent, revoked: list[_RevokedPair]) -> None:
@@ -834,7 +1166,7 @@ class TemporalResolver:
                     doc_sha256=doc_sha256,
                     details={"subject": subject, "revocation_deed": event.numero_escritura},
                 )
-            return kept_reps, self._remove_powers(event, subject_norm, [], powers, model), []
+            return kept_reps, self._remove_powers(event, subject_norm, [], kept_reps, powers, model), []
 
         for rep, match in revoked:
             rep.vigente = False
@@ -853,8 +1185,9 @@ class TemporalResolver:
                     "revocation_date": event.fecha_acto,
                 },
             )
-        revoked_norms = [rep.nombre_normalizado for rep, _ in revoked]
-        remaining_powers = self._remove_powers(event, subject_norm, revoked_norms, powers, model)
+        remaining_powers = self._remove_powers(
+            event, subject_norm, [rep for rep, _ in revoked], kept_reps, powers, model
+        )
         return kept_reps, remaining_powers, revoked
 
     @staticmethod
@@ -915,7 +1248,8 @@ class TemporalResolver:
         self,
         event: AmendmentEvent,
         subject_norm: str,
-        revoked_norms: list[str],
+        revoked_reps: list[LegalRepresentativeItem],
+        active_reps: list[LegalRepresentativeItem],
         powers: list[PowerOfAttorneyItem],
         model: RawDeedExtraction,
     ) -> list[PowerOfAttorneyItem]:
@@ -927,8 +1261,10 @@ class TemporalResolver:
             ``REVOCATION`` event.
         subject_norm : str
             Normalized revocation subject.
-        revoked_norms : list of str
-            Normalized names of representatives revoked by this event.
+        revoked_reps : list of LegalRepresentativeItem
+            Representatives revoked by this event for this subject.
+        active_reps : list of LegalRepresentativeItem
+            Representatives that remain active after this subject.
         powers : list of PowerOfAttorneyItem
             Currently active powers.
         model : RawDeedExtraction
@@ -947,6 +1283,12 @@ class TemporalResolver:
         ``GRANT_OF_POWERS`` event naming them, or a representative
         appointment dated after the revocation) the powers are kept and
         ``poderes`` is flagged for review instead of guessing.
+
+        A power granted to a role (``"EL ADMINISTRADOR UNICO"``) is matched
+        against the ``cargo`` of the revoked representatives with
+        :func:`normalize_role`. It is removed when no active representative
+        holds the same role and the person was not granted powers again;
+        otherwise it is kept and ``poderes`` is flagged for review.
         """
         revocation_date = _parse_iso_date(event.fecha_acto)
         regranted = False
@@ -966,7 +1308,9 @@ class TemporalResolver:
             rep_norm = rep.nombre_normalizado or normalize_person_name(rep.nombre)
             if classify_person_match(subject_norm, rep_norm, self._threshold).decision is MatchDecision.MATCH:
                 regranted = True
-        targets = [subject_norm, *revoked_norms]
+        targets = [subject_norm, *(rep.nombre_normalizado for rep in revoked_reps)]
+        revoked_roles = {normalize_role(rep.cargo) for rep in revoked_reps if rep.cargo}
+        active_roles = {normalize_role(rep.cargo) for rep in active_reps if rep.cargo}
         kept: list[PowerOfAttorneyItem] = []
         for power in powers:
             grantee = normalize_person_name(power.otorgado_a)
@@ -977,6 +1321,18 @@ class TemporalResolver:
                     model.poderes.flag_for_review(
                         f"Powers of '{power.otorgado_a}' were revoked in deed {event.numero_escritura} "
                         "and granted again later; verify which grants remain in force"
+                    )
+                    continue
+                power.vigente = False
+                continue
+            grantee_role = normalize_role(power.otorgado_a)
+            if grantee_role and grantee_role in revoked_roles:
+                if regranted or grantee_role in active_roles:
+                    kept.append(power)
+                    model.poderes.flag_for_review(
+                        f"Power granted to role '{power.otorgado_a}' was held by a representative revoked "
+                        f"in deed {event.numero_escritura} and the role is held or granted again; "
+                        "verify which grants remain in force"
                     )
                     continue
                 power.vigente = False
@@ -1037,8 +1393,12 @@ __all__ = [
     "first_given_name_agrees",
     "extract_amount_in_words",
     "normalize_person_name",
+    "SUBJECT_SUPPORT_PARTIAL_RATIO",
+    "normalize_role",
     "person_similarity",
+    "resolve_revocation_subjects",
     "split_revocation_subjects",
+    "subject_supported_by_quote",
     "strip_accents",
     "surnames_agree",
 ]

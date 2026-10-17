@@ -13,7 +13,9 @@ from src.pipeline.resolver import (
     classify_person_match,
     normalize_person_name,
     person_similarity,
+    resolve_revocation_subjects,
     split_revocation_subjects,
+    subject_supported_by_quote,
 )
 from src.pipeline.validators import TEMPORAL_INCONSISTENCY_REASON, verify_temporal_consistency
 from src.schemas.deed_models import AmendmentEvent, AmendmentType, RawDeedExtraction
@@ -43,6 +45,14 @@ from tests.conftest import read_audit_records
         ("LA SEÑORA MARIA ELENA TORRES VEGA", "MARIA ELENA TORRES VEGA"),
         ("C. PEDRO DIAZ SOTO", "PEDRO DIAZ SOTO"),
         ("DONALDO DIAZ SOTO", "DONALDO DIAZ SOTO"),
+        ("EL SR. JUAN CARLOS PEREZ LOPEZ", "JUAN CARLOS PEREZ LOPEZ"),
+        ("LA SRA. MARIA ELENA TORRES VEGA", "MARIA ELENA TORRES VEGA"),
+        ("EL LIC. JUAN CARLOS PEREZ LOPEZ", "JUAN CARLOS PEREZ LOPEZ"),
+        ("DEL SR. ALEJANDRO GOMEZ RUIZ", "ALEJANDRO GOMEZ RUIZ"),
+        ("EL C. PEDRO DIAZ SOTO", "PEDRO DIAZ SOTO"),
+        ("LIC. Y C.P. JUAN CARLOS PEREZ LOPEZ", "JUAN CARLOS PEREZ LOPEZ"),
+        ("LAURA DIAZ SOTO", "LAURA DIAZ SOTO"),
+        ("ELENA DIAZ SOTO", "ELENA DIAZ SOTO"),
     ],
 )
 def test_normalize_person_name(raw: str, expected: str) -> None:
@@ -244,6 +254,9 @@ def test_namesake_revocation_is_flagged_not_applied(
         event for event in raw.amendment_history if event.event_type is AmendmentType.REVOCATION
     )
     revocation.sujeto_afectado = "JUAN CARLOS PEREZ LOZANO"
+    revocation.evidence.source_quote = revocation.evidence.source_quote.replace(
+        "JUAN C. PEREZ LOPEZ", "JUAN CARLOS PEREZ LOZANO"
+    )
     resolved = TemporalResolver(settings).resolve(raw, job_id="job", doc_sha256="f" * 64)
     names = {rep.nombre_normalizado for rep in resolved.representantes_legales.value or []}
     assert "JUAN CARLOS PEREZ LOPEZ" in names
@@ -366,6 +379,13 @@ def test_cp_prefixed_revocation_subject_revokes(
         ("JUAN PEREZ Y LOPEZ", ["JUAN PEREZ Y LOPEZ"]),
         ("ANA E RUIZ SOTO", ["ANA E RUIZ SOTO"]),
         ("SR. JUAN C. PEREZ LOPEZ", ["SR. JUAN C. PEREZ LOPEZ"]),
+        ("GRUPO ALFA Y OMEGA DE MEXICO, S.A. DE C.V.", ["GRUPO ALFA Y OMEGA DE MEXICO, S.A. DE C.V."]),
+        ("PEREZ LOPEZ, JUAN CARLOS", ["JUAN CARLOS PEREZ LOPEZ"]),
+        ("MARIA ELENA TORRES VEGA, ADMINISTRADORA UNICA", ["MARIA ELENA TORRES VEGA"]),
+        (
+            "JUAN PEREZ LOPEZ, APODERADO Y MARIA TORRES VEGA",
+            ["JUAN PEREZ LOPEZ", "MARIA TORRES VEGA"],
+        ),
     ],
 )
 def test_split_revocation_subjects(subject: str, expected: list[str]) -> None:
@@ -396,7 +416,9 @@ def test_multi_person_revocation_revokes_both(
         Audit log of the test.
     """
     raw = raw_extractions["acta_c"]
-    _revocation(raw).sujeto_afectado = "SR. JUAN C. PEREZ LOPEZ Y C. MARIA ELENA TORRES VEGA"
+    event = _revocation(raw)
+    event.sujeto_afectado = "SR. JUAN C. PEREZ LOPEZ Y C. MARIA ELENA TORRES VEGA"
+    event.evidence.source_quote = f"{event.evidence.source_quote} y de la C. MARIA ELENA TORRES VEGA"
     resolved = TemporalResolver(settings).resolve(raw, job_id="job-multi", doc_sha256="d" * 64)
 
     reps = resolved.representantes_legales.value or []
@@ -411,3 +433,179 @@ def test_multi_person_revocation_revokes_both(
     assert revocation.revoked_appointment_evidence == [raw_reps[0].evidence, raw_reps[1].evidence]
     revoked_records = [r for r in read_audit_records(audit_log_path) if r["tag"] == "REVOKED"]
     assert len(revoked_records) == 2
+
+
+def test_unsupported_revocation_subject_is_not_applied(
+    settings: Settings, raw_extractions: dict[str, RawDeedExtraction], audit_log_path: Path
+) -> None:
+    """A revocation subject absent from its own quote revokes nobody and is flagged.
+
+    Parameters
+    ----------
+    settings : Settings
+        Isolated settings.
+    raw_extractions : dict of str to RawDeedExtraction
+        Cached raw extractions per acta.
+    audit_log_path : Path
+        Audit log of the test.
+    """
+    raw = raw_extractions["acta_c"]
+    _revocation(raw).sujeto_afectado = "MARIA ELENA TORRES VEGA"
+    resolved = TemporalResolver(settings).resolve(raw, job_id="job-unsup", doc_sha256="9" * 64)
+
+    names = {rep.nombre_normalizado for rep in resolved.representantes_legales.value or []}
+    assert names == {"JUAN CARLOS PEREZ LOPEZ", "MARIA ELENA TORRES VEGA", "ALEJANDRO GOMEZ RUIZ"}
+    reason = (
+        "Revocation subject 'MARIA ELENA TORRES VEGA' is not supported by the quote of deed 58,400; "
+        "revocation not applied"
+    )
+    assert reason in (resolved.representantes_legales.review_reason or "")
+    assert reason in (resolved.poderes.review_reason or "")
+    assert len(resolved.poderes.value or []) == 8
+    assert _revocation(resolved).matched_canonical_entity is None
+    records = read_audit_records(audit_log_path)
+    unsupported = [record for record in records if record["event"] == "revocation_subject_unsupported"]
+    assert len(unsupported) == 1
+    assert unsupported[0]["tag"] == "REVIEW_REQUIRED"
+    assert not [record for record in records if record["tag"] == "REVOKED"]
+
+
+def test_namesake_subject_unsupported_by_quote_is_flagged(
+    settings: Settings, raw_extractions: dict[str, RawDeedExtraction]
+) -> None:
+    """A namesake subject that the quote does not name is not applied and is flagged.
+
+    Parameters
+    ----------
+    settings : Settings
+        Isolated settings.
+    raw_extractions : dict of str to RawDeedExtraction
+        Cached raw extractions per acta.
+    """
+    raw = raw_extractions["acta_c"]
+    _revocation(raw).sujeto_afectado = "JUAN CARLOS PEREZ LOZANO"
+    resolved = TemporalResolver(settings).resolve(raw, job_id="job", doc_sha256="8" * 64)
+    names = {rep.nombre_normalizado for rep in resolved.representantes_legales.value or []}
+    assert "JUAN CARLOS PEREZ LOPEZ" in names
+    assert "is not supported by the quote of deed 58,400" in (resolved.representantes_legales.review_reason or "")
+
+
+@pytest.mark.parametrize(
+    ("subject", "quote", "supported"),
+    [
+        ("SR. JUAN C. PEREZ LOPEZ", "a favor del SR. JUAN C. PÉREZ LÓPEZ", True),
+        ("JUAN CARLOS PEREZ LOPEZ", "a favor de PEREZ LOPEZ, JUAN CARLOS", True),
+        ("MARIA ELENA TORRES VEGA", "a favor del SR. JUAN C. PEREZ LOPEZ", False),
+        ("JUAN CARLOS PEREZ LOZANO", "a favor del SR. JUAN C. PEREZ LOPEZ", False),
+    ],
+)
+def test_subject_supported_by_quote(subject: str, quote: str, supported: bool) -> None:
+    """Subjects are supported only when their surnames (or a close partial match) are in the quote.
+
+    Parameters
+    ----------
+    subject : str
+        Raw subject fragment.
+    quote : str
+        Event quote.
+    supported : bool
+        Expected outcome.
+    """
+    assert subject_supported_by_quote(subject, quote) is supported
+
+
+def test_unsplit_subject_preferred_when_it_matches() -> None:
+    """A representative whose name contains ``Y`` is matched unsplit."""
+    candidates = ["JUAN CARLOS PEREZ Y GOMEZ LOPEZ", "MARIA ELENA TORRES VEGA"]
+    subject = "JUAN CARLOS PEREZ Y GOMEZ LOPEZ"
+    assert split_revocation_subjects(subject) == ["JUAN CARLOS PEREZ", "GOMEZ LOPEZ"]
+    assert resolve_revocation_subjects(subject, candidates, 85.0) == [subject]
+
+
+def test_plain_split_used_when_inversion_matches_nobody() -> None:
+    """Two comma-separated two-token names fall back to the plain split when both match."""
+    candidates = ["JUAN PEREZ", "MARIA LOPEZ"]
+    assert resolve_revocation_subjects("JUAN PEREZ, MARIA LOPEZ", candidates, 85.0) == [
+        "JUAN PEREZ",
+        "MARIA LOPEZ",
+    ]
+
+
+def _role_grant_acta_c(raw: RawDeedExtraction) -> None:
+    """Rewrite the Juan Carlos powers of Acta C as grants to the role ``EL ADMINISTRADOR UNICO``.
+
+    Parameters
+    ----------
+    raw : RawDeedExtraction
+        Acta C raw extraction (mutated).
+    """
+    for power in raw.poderes.value or []:
+        if "JUAN" in power.otorgado_a:
+            power.otorgado_a = "EL ADMINISTRADOR UNICO"
+
+
+def test_role_granted_powers_of_revoked_holder_are_removed(
+    settings: Settings, raw_extractions: dict[str, RawDeedExtraction]
+) -> None:
+    """Powers granted to the role of a revoked holder are removed when no active rep holds the role.
+
+    Parameters
+    ----------
+    settings : Settings
+        Isolated settings.
+    raw_extractions : dict of str to RawDeedExtraction
+        Cached raw extractions per acta.
+    """
+    raw = raw_extractions["acta_c"]
+    _role_grant_acta_c(raw)
+    alejandro = next(rep for rep in raw.representantes_legales.value or [] if "ALEJANDRO" in rep.nombre)
+    alejandro.cargo = "Director General"
+    resolved = TemporalResolver(settings).resolve(raw, job_id="job", doc_sha256="7" * 64)
+    grantees = {normalize_person_name(power.otorgado_a) for power in resolved.poderes.value or []}
+    assert grantees == {"ALEJANDRO GOMEZ RUIZ", "MARIA ELENA TORRES VEGA"}
+    assert resolved.poderes.requires_human_review is False
+
+
+def test_role_granted_powers_with_active_role_holder_are_flagged(
+    settings: Settings, raw_extractions: dict[str, RawDeedExtraction]
+) -> None:
+    """Role grants are kept and flagged when an active representative holds the same role.
+
+    Parameters
+    ----------
+    settings : Settings
+        Isolated settings.
+    raw_extractions : dict of str to RawDeedExtraction
+        Cached raw extractions per acta.
+    """
+    raw = raw_extractions["acta_c"]
+    _role_grant_acta_c(raw)
+    resolved = TemporalResolver(settings).resolve(raw, job_id="job", doc_sha256="6" * 64)
+    assert len(resolved.poderes.value or []) == 8
+    assert resolved.poderes.requires_human_review is True
+    assert "Power granted to role 'EL ADMINISTRADOR UNICO'" in (resolved.poderes.review_reason or "")
+
+
+def test_power_grantee_without_active_representative_is_flagged(
+    settings: Settings, raw_extractions: dict[str, RawDeedExtraction]
+) -> None:
+    """An active power whose grantee is no active representative flags poderes.
+
+    Parameters
+    ----------
+    settings : Settings
+        Isolated settings.
+    raw_extractions : dict of str to RawDeedExtraction
+        Cached raw extractions per acta.
+    """
+    raw = raw_extractions["acta_c"]
+    powers = raw.poderes.value or []
+    stray = powers[-1].model_copy(deep=True)
+    stray.otorgado_a = "PEDRO DIAZ SOTO"
+    powers.append(stray)
+    resolved = TemporalResolver(settings).resolve(raw, job_id="job", doc_sha256="5" * 64)
+    assert resolved.poderes.requires_human_review is True
+    assert "Power grantee 'PEDRO DIAZ SOTO' does not match any active representative" in (
+        resolved.poderes.review_reason or ""
+    )
+    assert resolved.representantes_legales.requires_human_review is False
