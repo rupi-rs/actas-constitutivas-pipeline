@@ -42,6 +42,27 @@ def test_curp_is_masked() -> None:
     assert len(masked) == len(f"CURP {CURP}.")
 
 
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("RASC-850412-HM1", "RASC-******-HM1"),
+        ("RASC 850412 HM1", "RASC ****** HM1"),
+        ("rasc850412hm1", "rasc******hm1"),
+        ("rasc-850412-hm1", "rasc-******-hm1"),
+        ("LTP-190510-AB1", "LTP-******-AB1"),
+    ],
+)
+def test_rfc_separators_and_case_are_masked(raw: str, expected: str) -> None:
+    """RFCs with single separators or lowercase letters are masked in the same shape."""
+    assert redact_text(f"rfc {raw} ok") == f"rfc {expected} ok"
+
+
+def test_curp_separators_and_case_are_masked() -> None:
+    """CURPs with separators or lowercase letters keep prefix and suffix only."""
+    assert redact_text("curp RASC-850412-HMCSRR09.") == "curp RASC-******-******09."
+    assert redact_text("rasc850412hmcsrr09") == "rasc************09"
+
+
 def test_email_is_masked() -> None:
     """An email keeps its first local character and domain."""
     assert redact_text(f"contact {EMAIL} now") == "contact c***@example.com now"

@@ -13,17 +13,21 @@ masked before either handler emits.
 
 Notes
 -----
-Redaction rules (applied in this order, case-sensitive, token-bounded):
+Redaction rules (applied in this order, case-insensitive, token-bounded).
+Segments of an RFC or CURP may be separated by a single hyphen or whitespace
+character; separators are preserved in the masked output so the shape is kept:
 
 - CURP (18 chars, ``[A-Z]{4}\\d{6}[HMX][A-Z]{5}[A-Z0-9]\\d``): keep the
   first 4 and last 2 characters, mask the middle 12
-  (``RASC850412HMCSRR09`` -> ``RASC************09``). CURPs are masked first
+  (``RASC850412HMCSRR09`` -> ``RASC************09``,
+  ``RASC-850412-HMCSRR09`` -> ``RASC-******-******09``). CURPs are masked first
   because a CURP prefix also satisfies the RFC pattern.
 - RFC (``[A-ZÑ&]{3,4}\\d{6}[A-Z0-9]{3}``, 12 or 13 chars): keep the
   alphabetic prefix (3 letters for legal entities, 4 for individuals) and
   the 3-character homoclave, mask the 6-digit date segment
   (``PERJ800101ABC`` -> ``PERJ******ABC``, ``ABC800101XY1`` ->
-  ``ABC******XY1``). Length is preserved.
+  ``ABC******XY1``, ``RASC 850412 HM1`` -> ``RASC ****** HM1``). Length is
+  preserved.
 - Email: keep the first character of the local part and the full domain
   (``carlos.ramirez@example.com`` -> ``c***@example.com``).
 
@@ -83,10 +87,12 @@ _STAGE_WIDTH: int = 12
 _EVENT_WIDTH: int = 22
 
 _CURP_PATTERN: re.Pattern[str] = re.compile(
-    r"(?<![A-ZÑ&0-9])([A-Z]{4})(\d{6}[HMX][A-Z]{5}[A-Z0-9])(\d)(?![A-Z0-9])"
+    r"(?<![A-ZÑ&0-9])([A-Z]{4})[-\s]?(\d{6})[-\s]?([HMX][A-Z]{5}[A-Z0-9])[-\s]?(\d)(?![A-Z0-9])",
+    re.IGNORECASE,
 )
 _RFC_PATTERN: re.Pattern[str] = re.compile(
-    r"(?<![A-ZÑ&0-9])([A-ZÑ&]{3,4})(\d{6})([A-Z0-9]{3})(?![A-Z0-9])"
+    r"(?<![A-ZÑ&0-9])([A-ZÑ&]{3,4})([-\s]?)(\d{6})([-\s]?)([A-Z0-9]{3})(?![A-Z0-9])",
+    re.IGNORECASE,
 )
 _EMAIL_PATTERN: re.Pattern[str] = re.compile(
     r"(?<![A-Za-z0-9._%+-])([A-Za-z0-9])[A-Za-z0-9._%+-]*@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,})"
@@ -104,10 +110,19 @@ def _mask_curp(match: re.Match[str]) -> str:
     Returns
     -------
     str
-        Masked CURP of the same length.
+        Masked CURP of the same length; separators are preserved.
     """
     full = match.group(0)
-    return full[:4] + "*" * (len(full) - 6) + full[-2:]
+    alnum_total = sum(1 for char in full if char.isalnum())
+    out: list[str] = []
+    index = 0
+    for char in full:
+        if not char.isalnum():
+            out.append(char)
+            continue
+        out.append(char if index < 4 or index >= alnum_total - 2 else "*")
+        index += 1
+    return "".join(out)
 
 
 def _mask_rfc(match: re.Match[str]) -> str:
@@ -121,9 +136,12 @@ def _mask_rfc(match: re.Match[str]) -> str:
     Returns
     -------
     str
-        Masked RFC of the same length with the date segment replaced.
+        Masked RFC of the same length with the date segment replaced;
+        separators are preserved.
     """
-    return match.group(1) + "*" * len(match.group(2)) + match.group(3)
+    return (
+        match.group(1) + match.group(2) + "*" * len(match.group(3)) + match.group(4) + match.group(5)
+    )
 
 
 def _mask_email(match: re.Match[str]) -> str:
