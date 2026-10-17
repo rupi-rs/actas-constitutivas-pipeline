@@ -177,7 +177,7 @@ Cache semantics:
 - A SHA-256 cache hit never calls the API, even in live mode.
 - A live run on a new document persists a cache entry containing `model_version` and `prompt_sha256` (hash of the system prompt). On the live path an entry whose `prompt_sha256` differs from the current prompt is treated as a miss, so prompt changes invalidate live entries.
 - Pre-verified entries (`model_version` `pre-verified-cache-v1`) are never overwritten, not even with `--force-refresh`; the live result is discarded with a log line.
-- A live result with grounding or value-in-quote failures is not persisted; a `[WARN]` is logged.
+- A live result with grounding failures is not persisted; a `[WARN]` is logged. Value-in-quote failures do not block persistence because that check is recomputed deterministically on every run.
 - `--force-refresh` bypasses the cache read and requires live providers. Without them it logs a `[WARN]` and keeps using the cache.
 - If `--live` is requested without `OPENAI_API_KEY`, the pipeline logs a `[WARN]` and continues with the deterministic cache.
 
@@ -423,3 +423,10 @@ Decision thresholds (defined in `src/core/config.py`): native character threshol
 |   `-- cli/                      main
 `-- tests/                        pytest suite
 ```
+
+## Known limitations
+
+- Live mode needs `uv sync --extra ocr` to read scanned pages. Without it, a document with a scanned page fails with `[ERROR]` naming the missing extra; it does not degrade to a lower-quality path.
+- The OpenShift `Deployment` models a worker shape; batch runs go through `deploy/openshift-job.yaml`. Its probes only check that the CLI loads.
+- Person names (not RFC, CURP or email) can appear in audit log details.
+- Similarity thresholds were calibrated on synthetic data only.
