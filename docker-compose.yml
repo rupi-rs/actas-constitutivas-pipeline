@@ -1,0 +1,30 @@
+name: actas-pipeline
+
+services:
+  actas-pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: actas-pipeline:1.0.0
+    env_file:
+      - path: .env
+        required: false
+    # Matches the non-root UID used by the image; GID 0 mirrors OpenShift behaviour.
+    user: "1001:0"
+    read_only: true
+    tmpfs:
+      - /tmp
+    volumes:
+      - outputs-data:/app/outputs
+      - logs-data:/app/logs
+      - pipeline-data:/app/data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    command: ["demo"]
+
+volumes:
+  outputs-data:
+  logs-data:
+  pipeline-data:

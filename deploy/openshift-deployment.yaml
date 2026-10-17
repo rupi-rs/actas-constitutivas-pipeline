@@ -1,0 +1,176 @@
+# OpenShift manifests for the Corporate Document Automation pipeline.
+#
+# The manifests carry no namespace; apply them into the target project with
+# `oc apply -f deploy/openshift-deployment.yaml -n <project>`.
+#
+# Create the OpenAI credentials out-of-band (do not store the key in git):
+#   oc create secret generic actas-openai --from-literal=OPENAI_API_KEY='<key>'
+# An empty key selects the deterministic pre-verified SHA-256 cache fallback.
+#
+# Workload note: the container runs a bounded batch (generate-samples, process-all)
+# and then keeps the pod alive with `exec sleep infinity` so the Deployment does
+# not enter CrashLoopBackOff. In production this command should be replaced by a
+# long-running worker that consumes a job queue.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: actas-pipeline-config
+  labels:
+    app.kubernetes.io/name: actas-pipeline
+    app.kubernetes.io/part-of: corporate-document-automation
+data:
+  OPENAI_MODEL: "gpt-4o-2024-08-06"
+  LOG_LEVEL: "INFO"
+---
+# Template only. Applying this manifest overwrites an existing secret with an
+# empty value. Prefer `oc create secret` (see header) and remove this document
+# from the applied file once the secret exists.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: actas-openai
+  labels:
+    app.kubernetes.io/name: actas-pipeline
+    app.kubernetes.io/part-of: corporate-document-automation
+type: Opaque
+stringData:
+  OPENAI_API_KEY: ""
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: actas-pipeline
+  labels:
+    app.kubernetes.io/name: actas-pipeline
+    app.kubernetes.io/component: worker
+    app.kubernetes.io/part-of: corporate-document-automation
+    app.kubernetes.io/version: "1.0.0"
+spec:
+  # Initial replica count; the HorizontalPodAutoscaler below owns the value at runtime.
+  replicas: 3
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: actas-pipeline
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: actas-pipeline
+        app.kubernetes.io/component: worker
+        app.kubernetes.io/part-of: corporate-document-automation
+        app.kubernetes.io/version: "1.0.0"
+    spec:
+      # No runAsUser: OpenShift assigns an arbitrary UID from the namespace range.
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      # Bounds shutdown time, since `sleep` as PID 1 does not handle SIGTERM.
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: actas-pipeline
+          image: image-registry.openshift-image-registry.svc:5000/actas/actas-pipeline:1.0.0
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - "actas-cli generate-samples && actas-cli process-all && exec sleep infinity"
+          envFrom:
+            - configMapRef:
+                name: actas-pipeline-config
+          env:
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: actas-openai
+                  key: OPENAI_API_KEY
+                  optional: true
+            - name: ACTAS_PROJECT_ROOT
+              value: /app
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          livenessProbe:
+            exec:
+              command: ["python", "-c", "import src.core.config"]
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command: ["python", "-c", "import src.core.config"]
+            initialDelaySeconds: 5
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: logs
+              mountPath: /app/logs
+            - name: outputs
+              mountPath: /app/outputs
+            - name: data
+              mountPath: /app/data
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: logs
+          emptyDir: {}
+        - name: outputs
+          emptyDir: {}
+        - name: data
+          emptyDir: {}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: actas-pipeline
+  labels:
+    app.kubernetes.io/name: actas-pipeline
+    app.kubernetes.io/part-of: corporate-document-automation
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: actas-pipeline
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: actas-pipeline
+  labels:
+    app.kubernetes.io/name: actas-pipeline
+    app.kubernetes.io/part-of: corporate-document-automation
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: actas-pipeline
