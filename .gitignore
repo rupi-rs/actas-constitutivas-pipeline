@@ -23,3 +23,6 @@ setup_specs.py
 
 # Generated study material (kept local, not versioned)
 study_guides/
+
+# Local-only study guide generator sources
+src/generators/study/
