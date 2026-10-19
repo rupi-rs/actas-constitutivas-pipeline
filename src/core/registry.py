@@ -67,10 +67,10 @@ class DocumentTypeSpec:
     description : str, default ""
         Free-text description.
     critical_fields : tuple of str, optional
-        Applicable fields escalated to the VLM re-read and Decisions
-        predicate when their scanned page has low legibility, and whose
-        absence on a scanned document triggers one re-read and
-        re-extraction.
+        Applicable fields that, on a scanned page, always go through the
+        VLM re-read of their evidence region and the Decisions predicate on
+        the same crop (independently of OCR confidence), and whose absence
+        on a scanned document triggers one re-read and re-extraction.
 
     Raises
     ------

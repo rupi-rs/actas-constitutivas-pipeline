@@ -64,7 +64,7 @@ class VerifierError(PipelineError):
 
 
 class DecisionScoreError(PipelineError):
-    """Raised when a Decisions ``score`` request (page legibility or prompt-injection risk) fails."""
+    """Raised when a Decisions ``score`` request of the ``test-decisions`` demo fails."""
 
 
 class VisionReadError(PipelineError):

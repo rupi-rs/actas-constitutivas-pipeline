@@ -3,10 +3,11 @@
 High-level pipeline components depend only on these interfaces
 (Dependency Inversion); concrete OCR, verifier, LLM and storage
 implementations live in sibling modules and may be live or
-deterministic (cache-backed). The vision reader re-reads low-confidence OCR
-regions from their image crop before structured extraction. The decision
-scorer answers ordinal ``score`` questions about a whole page (legibility,
-prompt-injection risk) and is kept separate from the predicate verifier
+deterministic (cache-backed). The vision reader re-reads OCR regions from
+their image crop (low-confidence regions before extraction, critical-field
+regions after it). The decision scorer answers ordinal ``score`` questions
+and is used only by the ``test-decisions`` capability demo, never by the
+processing path; it is kept separate from the predicate verifier
 (Interface Segregation).
 """
 
@@ -190,7 +191,7 @@ class ScoreQuestion(BaseModel):
     Parameters
     ----------
     name : str
-        Question name echoed in the answer (for example ``OCR_LEGIBILITY_SCORE``).
+        Question name echoed in the answer (for example ``PROMPT_INJECTION_RISK_SCORE``).
     instructions : str
         Rating instructions.
     levels : tuple of ScoreLevel
@@ -344,7 +345,7 @@ class BaseVerifierProvider(ABC):
 
 
 class BaseDecisionScorer(ABC):
-    """Abstract page scorer answering Decisions ``score`` questions."""
+    """Abstract scorer answering Decisions ``score`` questions (``test-decisions`` only)."""
 
     @abstractmethod
     def score_page(
@@ -361,15 +362,15 @@ class BaseDecisionScorer(ABC):
         Parameters
         ----------
         doc_sha256 : str
-            Document hash (used by cache-backed scorers).
+            Document hash (audit records).
         page_number : int
             1-indexed page number.
         questions : list of ScoreQuestion
             Questions answered over the same input, batched together.
         text : str
-            Untrusted page text (native or OCR).
+            Untrusted text.
         image_png : bytes or None, default None
-            Full page image for scanned pages.
+            Optional image attached to the same request.
 
         Returns
         -------

@@ -174,15 +174,10 @@ class Evidence(StrictModel):
         Schema extension beyond spec 01: project-relative path of the PNG
         crop (bbox plus 12 pt padding, 200 dpi) sent to the vision reader
         and the Decisions verifier.
-    page_legibility_score : float or None, default None
-        Schema extension beyond spec 01: normalized Decisions
-        ``OCR_LEGIBILITY_SCORE`` (``score / (levels - 1)``) of the scanned
-        page holding the evidence; ``None`` for native pages or when the
-        score is unknown.
 
     Notes
     -----
-    The six extension fields are filled by the orchestrator only for
+    The five extension fields are filled by the orchestrator only for
     evidence inside a re-read region and are never requested from the
     extraction LLM (see :func:`openai_strict_json_schema`). Their ``None``
     defaults keep cached extractions and ground truth files valid.
@@ -199,7 +194,6 @@ class Evidence(StrictModel):
     vlm_legible: Optional[bool] = None
     verification_probability: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     crop_path: Optional[str] = None
-    page_legibility_score: Optional[float] = Field(default=None, ge=0.0, le=1.0)
 
 
 PIPELINE_EVIDENCE_FIELDS: tuple[str, ...] = (
@@ -208,7 +202,6 @@ PIPELINE_EVIDENCE_FIELDS: tuple[str, ...] = (
     "vlm_legible",
     "verification_probability",
     "crop_path",
-    "page_legibility_score",
 )
 """Evidence fields filled by the pipeline and excluded from the LLM schema."""
 
