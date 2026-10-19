@@ -14,21 +14,31 @@ reads the page; every region below ``ocr_confidence_threshold`` is cropped
 and re-read by a vision model; a legible, non-empty re-read that differs
 from the OCR text replaces it in the page text; structured extraction then
 runs on the corrected text; finally the Tier 2 Decisions predicate verifies
-the extracted value on the same crop for evidence inside a re-read region.
+the extracted value on the same crop.
 
-Before extraction every page is scored with Decisions ``score`` questions
-batched into one request per page: ``OCR_LEGIBILITY_SCORE`` on the full image
-of scanned pages and ``PROMPT_INJECTION_RISK_SCORE`` on the page text, next
-to a deterministic regex pre-filter that works offline. A page whose
-normalized legibility is below ``legibility_threshold`` makes the critical
-fields on it escalation candidates even when their OCR confidence is high:
-local OCR engines can silently drop characters hidden under a seal while
-reporting high confidence for what remains. A required critical field that
-ends up ``no_encontrado``, or a value-in-quote or capital consistency failure
-on a scanned page, triggers one bounded VLM re-read of the relevant region
-(or full page) and at most one re-extraction with the patched text. A
-suspected prompt injection adds a document-level security flag, forces
-global human review and prevents auto-approval of the fields on that page.
+The OpenAI Decisions API is used in one place only: the ``predicate`` that
+verifies what the vision model re-read. On a scanned page (including image
+inputs) every critical field of the document type always goes through the
+VLM re-read of its own evidence region and then the Decisions predicate on
+the same crop, independently of OCR confidence: local OCR engines can
+silently drop characters hidden under a seal while reporting high
+confidence for what remains. Non-critical fields on scanned pages are
+re-read and verified only when their OCR region confidence is below the
+threshold. Native pages never reach the vision model or Decisions.
+
+Human review is decided per field from facts about its own value: its
+calibrated ``|2p - 1|`` below ``verifier_confidence_threshold``, a re-read
+of its own region judged ``legible=false``, a deterministic validation
+failure, or a vision or verifier failure. A shared full-page re-read never
+flags a field by itself.
+
+Every page passes the offline regex prompt-injection pre-filter before
+extraction (no API call); a match adds a document-level security flag,
+forces global human review and prevents auto-approval of the fields on
+that page. A required critical field that ends up ``no_encontrado``, or a
+value-in-quote or capital consistency failure on a scanned page, triggers
+one bounded VLM re-read of the relevant region (or full page) and at most
+one re-extraction with the patched text.
 
 Idempotency follows the SHA-256 cache contract: when ``data/cache/{sha}.json``
 exists, OCR text, VLM re-reads, raw LLM extraction and verifier answers are served from it
@@ -57,7 +67,6 @@ from rapidfuzz import fuzz
 from src.core.config import Settings
 from src.core.exceptions import (
     CacheMissError,
-    DecisionScoreError,
     IngestionError,
     OCRError,
     PDFInspectionError,
@@ -81,17 +90,7 @@ from src.pipeline.validators import (
     verify_temporal_consistency,
     verify_value_in_quote,
 )
-from src.providers.decision_scorer import (
-    INJECTION_QUESTION,
-    LEGIBILITY_QUESTION,
-    OCR_LEGIBILITY_SCORE,
-    PROMPT_INJECTION_RISK_SCORE,
-    DeterministicDecisionsScorer,
-    build_decision_scorer,
-    score_entry,
-)
 from src.providers.interfaces import (
-    BaseDecisionScorer,
     BaseLLMProvider,
     BaseOCRProvider,
     BaseStorageRepository,
@@ -101,7 +100,6 @@ from src.providers.interfaces import (
     OCRResult,
     PageContent,
     PageSource,
-    ScoreResult,
     VerifierResult,
     VisionReadResult,
 )
@@ -139,12 +137,17 @@ _PRE_VERIFIED_MODEL_VERSION: str = "pre-verified-cache-v1"
 _MIN_REGION_OVERLAP_CHARS: int = 3
 _REGION_SEPARATOR: str = " "
 _READING_SUMMARY_LIMIT: int = 120
+_REGION_COVER_TOLERANCE: float = 1.0
+_MEMBER_MIN_CHARS: int = 6
+_MEMBER_MIN_RATIO: float = 90.0
+_MEMBER_FULL_COVERAGE: float = 0.8
+_PAGE_LEVEL_TEXT_COVERAGE: float = 0.9
 
 TRIGGER_OCR_CONFIDENCE: str = "ocr_confidence"
 """Re-read trigger: OCR region confidence below ``ocr_confidence_threshold``."""
 
-TRIGGER_PAGE_LEGIBILITY: str = "page_legibility"
-"""Re-read trigger: critical field on a scanned page with low legibility score."""
+TRIGGER_CRITICAL_FIELD: str = "critical_field"
+"""Re-read trigger: critical field on a scanned page (always re-read and verified)."""
 
 TRIGGER_MISSING_FIELD: str = "missing_field"
 """Re-read trigger: required critical field ``no_encontrado`` on a scanned document."""
@@ -153,13 +156,7 @@ TRIGGER_VALUE_INCONSISTENCY: str = "value_inconsistency"
 """Re-read trigger: value-in-quote or capital consistency failure on a scanned page."""
 
 SECURITY_FLAG_INJECTION: str = "prompt_injection_suspected"
-"""Security flag set when a page looks like a prompt-injection attempt."""
-
-SECURITY_FLAG_INJECTION_REFUSED: str = "prompt_injection_check_refused"
-"""Security flag set when Decisions refuses the prompt-injection question."""
-
-SECURITY_FLAG_INJECTION_UNAVAILABLE: str = "prompt_injection_check_unavailable"
-"""Security flag set when the live prompt-injection check fails."""
+"""Security flag set when the regex pre-filter matches a page."""
 
 
 class DocumentProcessingError(PipelineError):
@@ -185,20 +182,15 @@ class ProviderBundle:
     llm : BaseLLMProvider
         Structured extraction provider.
     vision : BaseVisionReader or None, default None
-        Vision reader for low-confidence OCR regions. ``None`` disables the
-        re-read (logged as WARN per page); evidence then goes straight to
-        the Decisions predicate.
-    scorer : BaseDecisionScorer or None, default None
-        Page scorer for the legibility and prompt-injection ``score``
-        questions. ``None`` skips them (the regex injection pre-filter
-        still runs) and keeps the OCR-confidence rules unchanged.
+        Vision reader for low-confidence OCR regions and critical-field
+        regions of scanned pages. ``None`` disables the re-read (logged as
+        WARN); evidence then goes straight to the Decisions predicate.
     """
 
     ocr: BaseOCRProvider
     verifier: BaseVerifierProvider
     llm: BaseLLMProvider
     vision: Optional[BaseVisionReader] = None
-    scorer: Optional[BaseDecisionScorer] = None
 
 
 @dataclass(frozen=True)
@@ -282,28 +274,18 @@ class _DocumentContext:
     raw_ocr_results : dict of int to OCRResult
         Tier 1 OCR output before any VLM correction (persisted in the cache).
     rereads : list of _RegionReread
-        VLM re-read outcome of every low-confidence region.
+        VLM re-read outcome of every re-read region (low OCR confidence,
+        critical field, missing field or value inconsistency).
     vlm_log : list of dict
         VLM re-reads collected for cache persistence.
     acta_id : str
         Document identifier used to name persisted crops.
     crop_names : set of str
         Crop file names already written for this document.
-    page_images : dict of int to bytes
-        Rendered images of scanned pages (legibility scoring input).
-    legibility : dict of int to float
-        Normalized ``OCR_LEGIBILITY_SCORE`` per scanned page, when answered.
-    legibility_notes : dict of int to str
-        Scanned pages whose critical fields must be escalated, with the
-        factual trigger (low score, refusal or unavailable scorer).
     suspicious_pages : dict of int to str
         Pages suspected of prompt injection, with the reason.
     security_flags : list of str
         Document-level security flags, in the order they were raised.
-    score_log : list of dict
-        Decisions score answers collected for cache persistence.
-    score_failures : int
-        Number of page score requests that failed.
     reextracted : bool
         ``True`` once the single bounded re-extraction has run.
     page_boxes : dict of int to BoundingBox
@@ -329,13 +311,8 @@ class _DocumentContext:
     crop_names: set[str] = field(default_factory=set)
     verifier_log: list[dict[str, Any]] = field(default_factory=list)
     verified: dict[tuple[int, tuple[float, ...], str], VerifierResult] = field(default_factory=dict)
-    page_images: dict[int, bytes] = field(default_factory=dict)
-    legibility: dict[int, float] = field(default_factory=dict)
-    legibility_notes: dict[int, str] = field(default_factory=dict)
     suspicious_pages: dict[int, str] = field(default_factory=dict)
     security_flags: list[str] = field(default_factory=list)
-    score_log: list[dict[str, Any]] = field(default_factory=list)
-    score_failures: int = 0
     reextracted: bool = False
     page_boxes: dict[int, BoundingBox] = field(default_factory=dict)
 
@@ -366,7 +343,7 @@ class _RegionReread:
     applied : bool
         ``True`` when the legible VLM reading replaced a differing OCR text.
     trigger : str, default TRIGGER_OCR_CONFIDENCE
-        Why the region was re-read (OCR confidence, page legibility,
+        Why the region was re-read (OCR confidence, critical field,
         missing field or value inconsistency).
     """
 
@@ -616,6 +593,31 @@ def _center_inside(inner: BoundingBox, outer: BoundingBox) -> bool:
     return outer.x1 <= center_x <= outer.x2 and outer.y1 <= center_y <= outer.y2
 
 
+def _covers(outer: BoundingBox, inner: BoundingBox) -> bool:
+    """Return whether a box contains another box, within a 1 pt tolerance.
+
+    Parameters
+    ----------
+    outer : BoundingBox
+        Candidate containing box.
+    inner : BoundingBox
+        Box that must lie inside ``outer``.
+
+    Returns
+    -------
+    bool
+        ``True`` when every edge of ``inner`` is inside ``outer`` (or
+        outside it by at most 1 PDF point).
+    """
+    tolerance = _REGION_COVER_TOLERANCE
+    return (
+        outer.x1 <= inner.x1 + tolerance
+        and outer.y1 <= inner.y1 + tolerance
+        and outer.x2 >= inner.x2 - tolerance
+        and outer.y2 >= inner.y2 - tolerance
+    )
+
+
 def _merge_regions(
     ocr: OCRResult, indices: list[int], reading: str, bbox: BoundingBox
 ) -> OCRResult:
@@ -741,6 +743,104 @@ def _quote_span_regions(quote: str, regions: list[OCRRegion]) -> list[OCRRegion]
     return selected
 
 
+def _compact(text: str) -> str:
+    """Lowercase a text and remove every whitespace character.
+
+    Parameters
+    ----------
+    text : str
+        Input text.
+
+    Returns
+    -------
+    str
+        Lowercase text without whitespace (local OCR engines often drop the
+        spaces between words, ``"GERENTEGENERAL:JORGE"``).
+    """
+    return "".join(text.lower().split())
+
+
+def _quote_member_regions(
+    quote: str, regions: list[OCRRegion]
+) -> tuple[list[OCRRegion], float]:
+    """Select the OCR lines whose text is contained in a quote, ignoring whitespace.
+
+    Parameters
+    ----------
+    quote : str
+        Evidence quote.
+    regions : list of OCRRegion
+        Page regions in reading order.
+
+    Returns
+    -------
+    tuple of (list of OCRRegion, float)
+        Regions of at least 6 non-space characters, not longer than the
+        quote, whose compact text aligns inside the compact quote with
+        ``rapidfuzz.fuzz.partial_ratio`` at 90 or above, and the fraction of
+        the compact quote they cover (capped at 1.0).
+
+    Notes
+    -----
+    Used when the quote cannot be aligned with the joined OCR text at all,
+    which happens when the quote comes from a vision re-read and the local
+    OCR engine dropped whole lines or the spaces between words.
+    """
+    target = _compact(quote)
+    if not target:
+        return [], 0.0
+    members: list[OCRRegion] = []
+    covered = 0
+    for region in regions:
+        text = _compact(region.text)
+        if len(text) < _MEMBER_MIN_CHARS or len(text) > len(target):
+            continue
+        if fuzz.partial_ratio(text, target) >= _MEMBER_MIN_RATIO:
+            members.append(region)
+            covered += len(text)
+    return members, min(1.0, covered / len(target))
+
+
+def _widen_to_neighbours(
+    box: BoundingBox, members: list[OCRRegion], regions: list[OCRRegion]
+) -> BoundingBox:
+    """Widen a partial evidence box to the gap between its neighbouring OCR lines.
+
+    Parameters
+    ----------
+    box : BoundingBox
+        Union of the OCR lines found inside the quote.
+    members : list of OCRRegion
+        Those lines.
+    regions : list of OCRRegion
+        Every region of the page.
+
+    Returns
+    -------
+    BoundingBox
+        Box spanning the full text width of the page, from the bottom of the
+        nearest other line above to the top of the nearest other line below
+        (or two median line heights beyond the box when there is none).
+
+    Notes
+    -----
+    When the lines found cover less than 80% of the quote, the missing
+    text was dropped by the OCR engine and lies next to them; the widened
+    box keeps it inside the crop sent to the vision reader and Decisions.
+    """
+    others = [region for region in regions if all(region is not member for member in members)]
+    heights = sorted(region.bbox.y2 - region.bbox.y1 for region in regions) or [0.0]
+    step = 2.0 * heights[len(heights) // 2]
+    above = [region.bbox.y2 for region in others if region.bbox.y2 <= box.y1]
+    below = [region.bbox.y1 for region in others if region.bbox.y1 >= box.y2]
+    return BoundingBox(
+        x1=min(region.bbox.x1 for region in regions),
+        y1=max(above) if above else max(0.0, box.y1 - step),
+        x2=max(region.bbox.x2 for region in regions),
+        y2=min(below) if below else box.y2 + step,
+    )
+
+
 def locate_evidence_region(ocr: OCRResult, evidence: Evidence) -> Optional[_LocatedRegion]:
     """Find the OCR region(s) supporting an evidence quote.
 
@@ -757,7 +857,10 @@ def locate_evidence_region(ocr: OCRResult, evidence: Evidence) -> Optional[_Loca
         Minimum confidence over every region overlapping the evidence
         bounding box; when there is no box or no overlap, the minimum
         confidence over the consecutive regions the quote aligns to, with
-        their union bounding box. ``None`` if nothing matches.
+        their union bounding box; failing that, the OCR lines contained in
+        the quote (:func:`_quote_member_regions`), widened to their
+        neighbouring lines when they cover less than 80% of the quote.
+        ``None`` if nothing matches.
 
     Notes
     -----
@@ -766,7 +869,11 @@ def locate_evidence_region(ocr: OCRResult, evidence: Evidence) -> Optional[_Loca
     being masked by clean neighbouring lines. Regions are chosen by the
     character span of the quote inside the joined page text, found with
     ``rapidfuzz.fuzz.partial_ratio_alignment`` at 85 or above, so unrelated
-    short regions elsewhere on the page do not affect the result.
+    short regions elsewhere on the page do not affect the result. The
+    whitespace-insensitive member fallback was added after live RapidOCR
+    runs on Acta B page 2, where the engine dropped whole lines and the
+    spaces between words, so quotes taken from the vision re-read could not
+    be aligned and fell back to a full-page box.
     """
     if evidence.bounding_box is not None:
         overlapping: list[OCRRegion] = [
@@ -781,11 +888,17 @@ def locate_evidence_region(ocr: OCRResult, evidence: Evidence) -> Optional[_Loca
     if not quote:
         return None
     matched = _quote_span_regions(quote, ocr.regions)
-    if not matched:
+    if matched:
+        return _LocatedRegion(
+            confidence=min(region.confidence for region in matched), bbox=_union_bbox(matched)
+        )
+    members, coverage = _quote_member_regions(evidence.source_quote, ocr.regions)
+    if not members:
         return None
-    return _LocatedRegion(
-        confidence=min(region.confidence for region in matched), bbox=_union_bbox(matched)
-    )
+    box = _union_bbox(members)
+    if coverage < _MEMBER_FULL_COVERAGE:
+        box = _widen_to_neighbours(box, members, ocr.regions)
+    return _LocatedRegion(confidence=min(region.confidence for region in members), bbox=box)
 
 
 class PipelineOrchestrator:
@@ -1138,7 +1251,7 @@ class PipelineOrchestrator:
             pdf_bytes, job_id=context.job_id, doc_sha256=context.doc_sha256
         )
         self._fill_ocr(inspected, providers.ocr, context)
-        self._score_pages(providers.scorer, context)
+        self._screen_injection(context)
         self._reread_low_confidence(providers.vision, context)
         log_event(
             _LOGGER,
@@ -1153,7 +1266,6 @@ class PipelineOrchestrator:
                 "ocr_pages": len(context.ocr_results),
                 "vlm_rereads": len(context.rereads),
                 "vlm_corrections": sum(1 for item in context.rereads if item.applied),
-                "low_legibility_pages": sorted(context.legibility_notes),
                 "suspicious_pages": sorted(context.suspicious_pages),
             },
             message=(
@@ -1175,7 +1287,9 @@ class PipelineOrchestrator:
         raw_snapshot = current.raw_snapshot
 
         stage_start = time.perf_counter()
-        escalated = self._escalate(resolved, providers.verifier, context, spec.critical_fields)
+        escalated = self._escalate(
+            resolved, providers.verifier, providers.vision, context, spec.critical_fields
+        )
         log_event(
             _LOGGER,
             tag=StatusTag.INFO,
@@ -1209,17 +1323,6 @@ class PipelineOrchestrator:
                     doc_sha256=context.doc_sha256,
                     details={"vision_failures": context.vision_failures},
                     message=f"live result for {acta_id} not cached: vision re-read failed",
-                )
-            elif context.score_failures:
-                log_event(
-                    _LOGGER,
-                    tag=StatusTag.WARN,
-                    event="cache_not_written",
-                    stage="persistence",
-                    job_id=context.job_id,
-                    doc_sha256=context.doc_sha256,
-                    details={"score_failures": context.score_failures},
-                    message=f"live result for {acta_id} not cached: Decisions page scoring failed",
                 )
             elif context.verifier_failures:
                 log_event(
@@ -1328,7 +1431,10 @@ class PipelineOrchestrator:
             doc_sha256=context.doc_sha256,
         )
         value_failures = verify_value_in_quote(
-            resolved, job_id=context.job_id, doc_sha256=context.doc_sha256
+            resolved,
+            page_texts=context.page_texts,
+            job_id=context.job_id,
+            doc_sha256=context.doc_sha256,
         )
         temporal_failures = verify_temporal_consistency(
             resolved, job_id=context.job_id, doc_sha256=context.doc_sha256
@@ -1584,7 +1690,6 @@ class PipelineOrchestrator:
                     {"page_number": page.page_number},
                 )
             stage_start = time.perf_counter()
-            context.page_images[page.page_number] = page.image_png
             result = ocr.extract_page(context.doc_sha256, page.page_number, page.image_png)
             context.raw_ocr_results[page.page_number] = result
             context.ocr_results[page.page_number] = result
@@ -1616,33 +1721,24 @@ class PipelineOrchestrator:
                 ),
             )
 
-    def _score_pages(
-        self, scorer: Optional[BaseDecisionScorer], context: _DocumentContext
-    ) -> None:
-        """Score page legibility and prompt-injection risk before extraction.
+    def _screen_injection(self, context: _DocumentContext) -> None:
+        """Run the offline regex prompt-injection pre-filter on every page.
 
         Parameters
         ----------
-        scorer : BaseDecisionScorer or None
-            Decisions page scorer; ``None`` runs only the regex pre-filter.
         context : _DocumentContext
-            Working state with page texts and scanned page images.
+            Working state with the page texts (native or OCR).
 
         Notes
         -----
-        The deterministic regex pre-filter runs on every page, offline. With
-        a scorer, one Decisions request per page batches
-        ``OCR_LEGIBILITY_SCORE`` (scanned pages, full page image) and
-        ``PROMPT_INJECTION_RISK_SCORE`` (page text, plus the image already
-        attached for scanned pages). A failed request on a scanned page marks
-        its legibility as unavailable (its critical fields are escalated)
-        and raises the ``prompt_injection_check_unavailable`` flag; unknown
-        cached answers only log a WARN and leave the previous rules intact.
+        Runs before extraction without any API call. A match raises the
+        ``prompt_injection_suspected`` security flag, forces global human
+        review and marks the page as suspicious, so no field whose evidence
+        lies on it is auto-approved. The page text is still extracted as
+        untrusted data.
         """
         for page_number in sorted(context.pages):
-            page = context.pages[page_number]
-            scanned = page.source is PageSource.SCANNED_PAGE
-            matches = detect_injection_patterns(page.text)
+            matches = detect_injection_patterns(context.pages[page_number].text)
             if matches:
                 self._flag_injection(
                     context,
@@ -1650,196 +1746,7 @@ class PipelineOrchestrator:
                     SECURITY_FLAG_INJECTION,
                     f"deterministic pattern match: {', '.join(matches)}",
                     {"source": "regex_prefilter", "patterns": matches},
-                    page_level=True,
                 )
-            if scorer is None:
-                if scanned:
-                    log_event(
-                        _LOGGER,
-                        tag=StatusTag.WARN,
-                        event="page_scoring_skipped",
-                        stage="page_scoring",
-                        job_id=context.job_id,
-                        doc_sha256=context.doc_sha256,
-                        details={"page_number": page_number},
-                        message=f"page {page_number}: no Decisions scorer configured; legibility not scored",
-                    )
-                continue
-            questions = ([LEGIBILITY_QUESTION] if scanned else []) + [INJECTION_QUESTION]
-            stage_start = time.perf_counter()
-            try:
-                results = scorer.score_page(
-                    context.doc_sha256,
-                    page_number,
-                    questions,
-                    text=page.text,
-                    image_png=context.page_images.get(page_number) if scanned else None,
-                )
-            except DecisionScoreError as exc:
-                context.score_failures += 1
-                log_event(
-                    _LOGGER,
-                    tag=StatusTag.WARN,
-                    event="decision_scoring_failed",
-                    stage="page_scoring",
-                    job_id=context.job_id,
-                    doc_sha256=context.doc_sha256,
-                    duration_ms=self._elapsed(stage_start),
-                    details={"page_number": page_number, "error": exc.message},
-                    message=f"page {page_number}: Decisions score request failed: {exc.message}",
-                )
-                if scanned:
-                    context.legibility_notes[page_number] = (
-                        f"page legibility score unavailable ({exc.message})"
-                    )
-                self._flag_injection(
-                    context,
-                    page_number,
-                    SECURITY_FLAG_INJECTION_UNAVAILABLE,
-                    f"{PROMPT_INJECTION_RISK_SCORE} unavailable ({exc.message})",
-                    {"source": "decisions", "error": exc.message},
-                    page_level=False,
-                )
-                continue
-            for result in results:
-                self._record_score(result, context, self._elapsed(stage_start))
-
-    def _record_score(
-        self, result: ScoreResult, context: _DocumentContext, duration_ms: float
-    ) -> None:
-        """Apply one Decisions score answer to the document state.
-
-        Parameters
-        ----------
-        result : ScoreResult
-            Answer to a legibility or prompt-injection question.
-        context : _DocumentContext
-            Working state, updated in place.
-        duration_ms : float
-            Duration of the request that produced the answer.
-        """
-        page_number = result.page_number
-        if result.outcome != "unknown":
-            context.score_log.append(score_entry(result))
-        details: dict[str, Any] = {
-            "page_number": page_number,
-            "question": result.name,
-            "outcome": result.outcome,
-            "score": result.score,
-            "normalized_score": result.normalized_score,
-            "confidence": result.confidence,
-            "probabilities": [item.model_dump() for item in result.probabilities],
-            "engine": result.engine,
-            "input_tokens": result.input_tokens,
-        }
-        if result.name == OCR_LEGIBILITY_SCORE:
-            threshold = self._settings.legibility_threshold
-            details["threshold"] = threshold
-            if result.outcome == "answered" and result.normalized_score is not None:
-                context.legibility[page_number] = result.normalized_score
-                low = result.normalized_score < threshold
-                if low:
-                    context.legibility_notes[page_number] = (
-                        f"page legibility {result.normalized_score:.2f} < {threshold:.2f} "
-                        f"({OCR_LEGIBILITY_SCORE})"
-                    )
-                details["escalate_critical_fields"] = low
-                log_event(
-                    _LOGGER,
-                    tag=StatusTag.WARN if low else StatusTag.INFO,
-                    event="page_legibility_scored",
-                    stage="page_scoring",
-                    job_id=context.job_id,
-                    doc_sha256=context.doc_sha256,
-                    duration_ms=duration_ms,
-                    details=details,
-                    message=(
-                        f"page {page_number} legibility score {result.score:.2f} "
-                        f"(normalized {result.normalized_score:.2f} "
-                        f"{'<' if low else '>='} {threshold:.2f})"
-                        + ("; critical fields on this page will be escalated" if low else "")
-                    ),
-                )
-            elif result.outcome == "refused":
-                context.legibility_notes[page_number] = (
-                    f"page legibility score refused by Decisions ({OCR_LEGIBILITY_SCORE})"
-                )
-                log_event(
-                    _LOGGER,
-                    tag=StatusTag.WARN,
-                    event="page_legibility_refused",
-                    stage="page_scoring",
-                    job_id=context.job_id,
-                    doc_sha256=context.doc_sha256,
-                    duration_ms=duration_ms,
-                    details=details,
-                    message=(
-                        f"page {page_number}: Decisions refused {OCR_LEGIBILITY_SCORE}; "
-                        "critical fields on this page will be escalated"
-                    ),
-                )
-            else:
-                log_event(
-                    _LOGGER,
-                    tag=StatusTag.WARN,
-                    event="page_legibility_unknown",
-                    stage="page_scoring",
-                    job_id=context.job_id,
-                    doc_sha256=context.doc_sha256,
-                    duration_ms=duration_ms,
-                    details=details,
-                    message=f"page {page_number}: legibility unknown; OCR-confidence rules apply unchanged",
-                )
-            return
-        if result.name != PROMPT_INJECTION_RISK_SCORE:
-            return
-        threshold = self._settings.injection_risk_threshold
-        details["threshold"] = threshold
-        if result.outcome == "answered" and result.normalized_score is not None:
-            log_event(
-                _LOGGER,
-                tag=StatusTag.INFO,
-                event="prompt_injection_scored",
-                stage="page_scoring",
-                job_id=context.job_id,
-                doc_sha256=context.doc_sha256,
-                duration_ms=duration_ms,
-                details=details,
-                message=(
-                    f"page {page_number} prompt-injection risk {result.score:.2f} "
-                    f"(normalized {result.normalized_score:.2f} vs {threshold:.2f})"
-                ),
-            )
-            if result.normalized_score >= threshold:
-                self._flag_injection(
-                    context,
-                    page_number,
-                    SECURITY_FLAG_INJECTION,
-                    f"{PROMPT_INJECTION_RISK_SCORE} {result.normalized_score:.2f} >= {threshold:.2f}",
-                    {**details, "source": "decisions"},
-                    page_level=True,
-                )
-        elif result.outcome == "refused":
-            self._flag_injection(
-                context,
-                page_number,
-                SECURITY_FLAG_INJECTION_REFUSED,
-                f"{PROMPT_INJECTION_RISK_SCORE} refused by Decisions",
-                {**details, "source": "decisions"},
-                page_level=True,
-            )
-        else:
-            log_event(
-                _LOGGER,
-                tag=StatusTag.WARN,
-                event="prompt_injection_unknown",
-                stage="page_scoring",
-                job_id=context.job_id,
-                doc_sha256=context.doc_sha256,
-                duration_ms=duration_ms,
-                details=details,
-                message=f"page {page_number}: prompt-injection risk unknown; regex pre-filter result applies",
-            )
 
     def _flag_injection(
         self,
@@ -1848,10 +1755,8 @@ class PipelineOrchestrator:
         flag: str,
         reason: str,
         details: dict[str, Any],
-        *,
-        page_level: bool,
     ) -> None:
-        """Raise a document-level security flag for a page.
+        """Raise a document-level security flag and mark the page suspicious.
 
         Parameters
         ----------
@@ -1865,22 +1770,23 @@ class PipelineOrchestrator:
             Factual reason.
         details : dict
             Extra audit details.
-        page_level : bool
-            ``True`` marks the page as suspicious, so no field whose evidence
-            lies on it is auto-approved.
+
+        Notes
+        -----
+        A suspicious page prevents the auto-approval of every field whose
+        evidence lies on it.
         """
         if flag not in context.security_flags:
             context.security_flags.append(flag)
-        if page_level:
-            previous = context.suspicious_pages.get(page_number)
-            context.suspicious_pages[page_number] = (
-                reason if previous is None or reason in previous else f"{previous}; {reason}"
-            )
+        previous = context.suspicious_pages.get(page_number)
+        context.suspicious_pages[page_number] = (
+            reason if previous is None or reason in previous else f"{previous}; {reason}"
+        )
         log_event(
             _LOGGER,
             tag=StatusTag.REVIEW_REQUIRED,
             event=flag,
-            stage="page_scoring",
+            stage="injection_screening",
             job_id=context.job_id,
             doc_sha256=context.doc_sha256,
             details={**details, "page_number": page_number, "reason": reason},
@@ -2136,6 +2042,40 @@ class PipelineOrchestrator:
         context.page_boxes[page_number] = box
         return box
 
+    @staticmethod
+    def _locate(context: _DocumentContext, evidence: Evidence) -> Optional[_LocatedRegion]:
+        """Locate the OCR region of an evidence, preferring Tier 1 OCR geometry.
+
+        Parameters
+        ----------
+        context : _DocumentContext
+            Working state with the raw and corrected OCR results.
+        evidence : Evidence
+            Evidence on a scanned page.
+
+        Returns
+        -------
+        _LocatedRegion or None
+            Region found in the Tier 1 OCR output (line-level boxes), else in
+            the corrected OCR output; ``None`` when neither matches.
+
+        Notes
+        -----
+        A full-page re-read merges every OCR line of the page into one
+        region; searching the Tier 1 lines first keeps a tight box (and a
+        tight crop for the Decisions predicate) for every field whose quote
+        still aligns with them.
+        """
+        raw = context.raw_ocr_results.get(evidence.page_number)
+        corrected = context.ocr_results.get(evidence.page_number)
+        if raw is not None:
+            located = locate_evidence_region(raw, evidence)
+            if located is not None:
+                return located
+        if corrected is not None and corrected is not raw:
+            return locate_evidence_region(corrected, evidence)
+        return None
+
     def _evidence_region(
         self, evidence: Evidence, context: _DocumentContext
     ) -> Optional[tuple[BoundingBox, float]]:
@@ -2155,8 +2095,7 @@ class PipelineOrchestrator:
             box with its confidence, else the full page with the page
             confidence; ``None`` when nothing can be measured.
         """
-        ocr = context.ocr_results.get(evidence.page_number)
-        located = locate_evidence_region(ocr, evidence) if ocr is not None else None
+        located = self._locate(context, evidence)
         if located is not None:
             return evidence.bounding_box or located.bbox, located.confidence
         if evidence.bounding_box is not None:
@@ -2189,11 +2128,11 @@ class PipelineOrchestrator:
 
         Notes
         -----
-        Targets come from three triggers on scanned pages: a required
-        critical field ``no_encontrado`` (every scanned page, full page);
-        a value-in-quote or capital consistency failure (the evidence
-        region); and a critical field on a page with low legibility (the
-        evidence region).
+        Targets come from two triggers on scanned pages: a required
+        critical field ``no_encontrado`` (every scanned page, full page)
+        and a value-in-quote or capital consistency failure (the evidence
+        region). Critical fields are re-read on their own region during
+        escalation, after the final extraction pass.
         """
         scanned = sorted(
             number
@@ -2258,18 +2197,6 @@ class PipelineOrchestrator:
             region = self._evidence_region(evidence, context)
             if region is not None:
                 _add(evidence.page_number, region[0], TRIGGER_VALUE_INCONSISTENCY)
-        for ref in self._evidence_entries(model):
-            page_number = ref.evidence.page_number
-            if (
-                ref.wrapper is None
-                or not spec.is_critical(ref.name)
-                or page_number not in scanned
-                or page_number not in context.legibility_notes
-            ):
-                continue
-            region = self._evidence_region(ref.evidence, context)
-            if region is not None:
-                _add(page_number, region[0], TRIGGER_PAGE_LEGIBILITY)
         return targets
 
     def _late_reread(
@@ -2576,8 +2503,10 @@ class PipelineOrchestrator:
         Evidence on native pages is set to ``1.0`` / ``NATIVE_PDF``. Evidence
         on scanned pages takes the confidence of its OCR region with source
         ``OCR_ENGINE`` and receives the region bounding box when missing, so
-        live LLM output cannot self-assert confidence. Evidence on a scanned
-        page also records the page legibility score when it is known.
+        live LLM output cannot self-assert confidence. Regions are located
+        with :meth:`_locate` (Tier 1 OCR geometry first), so a full-page
+        re-read never widens the box of a field whose quote is found on a
+        single OCR line.
         """
         for ref in self._evidence_entries(model):
             evidence = ref.evidence
@@ -2588,9 +2517,7 @@ class PipelineOrchestrator:
                 evidence.confidence_score = 1.0
                 evidence.confidence_source = ConfidenceSource.NATIVE_PDF
                 continue
-            evidence.page_legibility_score = context.legibility.get(evidence.page_number)
-            ocr = context.ocr_results.get(evidence.page_number)
-            located = locate_evidence_region(ocr, evidence) if ocr is not None else None
+            located = self._locate(context, evidence)
             if located is None:
                 continue
             if evidence.bounding_box is None:
@@ -2689,21 +2616,25 @@ class PipelineOrchestrator:
         self,
         model: RawDeedExtraction,
         verifier: BaseVerifierProvider,
+        vision: Optional[BaseVisionReader],
         context: _DocumentContext,
         critical_fields: tuple[str, ...] = (),
     ) -> int:
-        """Apply Escalation Tiers 1 and 2 to unreliable scanned evidence.
+        """Re-read and verify scanned evidence, then route each field to review.
 
         Parameters
         ----------
         model : RawDeedExtraction
             Resolved extraction (mutated in place).
         verifier : BaseVerifierProvider
-            Tier 2 predicate verifier.
+            Tier 2 Decisions predicate verifier.
+        vision : BaseVisionReader or None
+            Vision reader for critical-field regions; ``None`` skips the
+            re-read with a WARN (the predicate still runs).
         context : _DocumentContext
             Working state with pages, OCR results and verifier memo.
         critical_fields : tuple of str, default ()
-            Fields escalated when their page has low legibility.
+            Fields always re-read and verified on scanned pages.
 
         Returns
         -------
@@ -2712,14 +2643,16 @@ class PipelineOrchestrator:
 
         Notes
         -----
-        An evidence on a scanned page is escalated when its OCR region has
-        confidence below ``ocr_confidence_threshold`` (Tier 1), when it
-        belongs to a critical field on a page whose legibility score is low,
-        refused or unavailable, or when it lies inside a post-extraction
-        re-read box. The predicate verifier answers with probability ``p``;
-        the calibrated confidence ``|2p - 1|`` replaces the evidence
-        confidence, and a value below ``verifier_confidence_threshold``
-        flags the field for human review.
+        Only evidence on scanned pages is considered; native pages never
+        reach the vision model or Decisions. An evidence is escalated when
+        it belongs to a critical field (always), when its OCR region has
+        confidence below ``ocr_confidence_threshold`` (Tier 1), or when it
+        lies inside a post-extraction re-read box. A critical field whose
+        own region was not re-read yet is re-read now
+        (``TRIGGER_CRITICAL_FIELD``). The Decisions predicate then runs on
+        a tight crop of the field region; ``|2p - 1|`` replaces the
+        evidence confidence and :meth:`_decide_review` applies the
+        per-field review rules.
         """
         verified_count = 0
         ocr_threshold = self._settings.ocr_confidence_threshold
@@ -2729,23 +2662,19 @@ class PipelineOrchestrator:
             ocr = context.ocr_results.get(evidence.page_number)
             if page is None or ocr is None or page.source is not PageSource.SCANNED_PAGE:
                 continue
-            located = locate_evidence_region(ocr, evidence)
+            located = self._locate(context, evidence)
             low_ocr = located is not None and located.confidence < ocr_threshold
-            legibility_note = (
-                context.legibility_notes.get(evidence.page_number)
-                if wrapper is not None and name in critical_fields
-                else None
-            )
+            critical = wrapper is not None and name in critical_fields
             guess = evidence.bounding_box or (located.bbox if located is not None else None)
             late = [
                 item
                 for item in context.rereads
-                if item.trigger != TRIGGER_OCR_CONFIDENCE
+                if item.trigger not in (TRIGGER_OCR_CONFIDENCE, TRIGGER_CRITICAL_FIELD)
                 and item.page_number == evidence.page_number
                 and guess is not None
                 and item.bbox.overlaps(guess)
             ]
-            if not low_ocr and legibility_note is None and not late:
+            if not low_ocr and not critical and not late:
                 continue
             if located is not None:
                 bbox = evidence.bounding_box or located.bbox
@@ -2753,31 +2682,32 @@ class PipelineOrchestrator:
             else:
                 region = self._evidence_region(evidence, context)
                 if region is None:
+                    self._route_unlocated(ref, context)
                     continue
                 bbox, ocr_confidence = region
             trigger_note: Optional[str] = None
             if not low_ocr:
-                trigger_note = legibility_note or (
-                    "post-extraction VLM re-read ("
+                trigger_note = (
+                    f"critical field {name} on scanned page {evidence.page_number}"
+                    if critical
+                    else "post-extraction VLM re-read ("
                     + ", ".join(sorted({item.trigger for item in late}))
                     + ")"
                 )
+            if critical:
+                self._ensure_region_reread(vision, context, name, evidence.page_number, bbox)
             predicate = self._build_predicate(name, wrapper, evidence)
             key = (evidence.page_number, tuple(bbox.as_list()), predicate)
-            rereads = [
-                item
-                for item in context.rereads
-                if item.page_number == evidence.page_number and item.bbox.overlaps(bbox)
-            ]
+            rereads = self._own_rereads(context, evidence.page_number, bbox)
             self._attach_rereads(evidence, rereads)
             log_event(
                 _LOGGER,
-                tag=StatusTag.WARN,
+                tag=StatusTag.WARN if low_ocr else StatusTag.INFO,
                 event=(
                     "tier1_escalation"
                     if low_ocr
-                    else "legibility_escalation"
-                    if legibility_note is not None
+                    else "critical_field_escalation"
+                    if critical
                     else "reread_escalation"
                 ),
                 stage="escalation",
@@ -2791,7 +2721,6 @@ class PipelineOrchestrator:
                     "bbox": bbox.as_list(),
                     "vlm_rereads": len(rereads),
                     "trigger": "ocr_confidence" if low_ocr else trigger_note,
-                    "page_legibility": context.legibility.get(evidence.page_number),
                 },
                 message=(
                     f"{name}: OCR confidence {ocr_confidence:.2f} below "
@@ -2799,7 +2728,7 @@ class PipelineOrchestrator:
                     "escalating to predicate verification"
                     if low_ocr
                     else f"{name}: OCR confidence {ocr_confidence:.2f} on page "
-                    f"{evidence.page_number} but {trigger_note}; escalating to predicate verification"
+                    f"{evidence.page_number}; {trigger_note}; escalating to predicate verification"
                 ),
             )
             crop = self._render_crop(context, evidence.page_number, bbox)
@@ -2845,6 +2774,176 @@ class PipelineOrchestrator:
                 ref, ocr_confidence, bbox, result, rereads, context, trigger_note
             )
         return verified_count
+
+    @classmethod
+    def _own_rereads(
+        cls, context: _DocumentContext, page_number: int, bbox: BoundingBox
+    ) -> list[_RegionReread]:
+        """Return the re-reads that are facts about one field region.
+
+        Parameters
+        ----------
+        context : _DocumentContext
+            Working state with every re-read.
+        page_number : int
+            1-indexed page of the field evidence.
+        bbox : BoundingBox
+            Field region (also the predicate crop box).
+
+        Returns
+        -------
+        list of _RegionReread
+            Region re-reads on the page that cover the field region, or that
+            lie inside it (an OCR line of the field quote), in order.
+
+        Notes
+        -----
+        Shared full-page re-reads of the missing-field path are excluded:
+        their ``legible`` verdict describes the whole page, not the field.
+        A page-level re-read made for another field is excluded too, unless
+        the field's own box is page-level as well.
+        """
+        page_level_field = cls._is_page_level(context, page_number, bbox)
+        return [
+            item
+            for item in context.rereads
+            if item.page_number == page_number
+            and item.trigger != TRIGGER_MISSING_FIELD
+            and (_covers(item.bbox, bbox) or _center_inside(item.bbox, bbox))
+            and (page_level_field or not cls._is_page_level(context, page_number, item.bbox))
+        ]
+
+    @staticmethod
+    def _is_page_level(context: _DocumentContext, page_number: int, bbox: BoundingBox) -> bool:
+        """Return whether a box covers the whole text area of a scanned page.
+
+        Parameters
+        ----------
+        context : _DocumentContext
+            Working state with the Tier 1 OCR output.
+        page_number : int
+            1-indexed page number.
+        bbox : BoundingBox
+            Re-read box.
+
+        Returns
+        -------
+        bool
+            ``True`` when the box covers at least 90% of the area of the
+            union of the Tier 1 OCR lines of the page.
+
+        Notes
+        -----
+        The ``legible`` verdict of such a re-read describes the page (for
+        example a seal elsewhere on it), not one field, so it never flags a
+        field by itself; the field's own Decisions predicate decides.
+        """
+        ocr = context.raw_ocr_results.get(page_number) or context.ocr_results.get(page_number)
+        if ocr is None or not ocr.regions:
+            return False
+        text = _union_bbox(list(ocr.regions))
+        width = min(bbox.x2, text.x2) - max(bbox.x1, text.x1)
+        height = min(bbox.y2, text.y2) - max(bbox.y1, text.y1)
+        area = (text.x2 - text.x1) * (text.y2 - text.y1)
+        if width <= 0 or height <= 0 or area <= 0:
+            return False
+        return width * height / area >= _PAGE_LEVEL_TEXT_COVERAGE
+
+    def _ensure_region_reread(
+        self,
+        vision: Optional[BaseVisionReader],
+        context: _DocumentContext,
+        name: str,
+        page_number: int,
+        bbox: BoundingBox,
+    ) -> None:
+        """Re-read a critical field region unless a region re-read already covers it.
+
+        Parameters
+        ----------
+        vision : BaseVisionReader or None
+            Vision reader; ``None`` logs a WARN and skips the re-read.
+        context : _DocumentContext
+            Working state (re-reads appended in place).
+        name : str
+            Contract field name (audit records).
+        page_number : int
+            1-indexed page number.
+        bbox : BoundingBox
+            Field region.
+
+        Notes
+        -----
+        The reading is recorded for the review decision and the audit trail
+        but does not patch the page text: extraction has already run.
+        """
+        page_level_field = self._is_page_level(context, page_number, bbox)
+        if any(
+            item.page_number == page_number
+            and item.trigger != TRIGGER_MISSING_FIELD
+            and _covers(item.bbox, bbox)
+            and (page_level_field or not self._is_page_level(context, page_number, item.bbox))
+            for item in context.rereads
+        ):
+            return
+        if vision is None:
+            log_event(
+                _LOGGER,
+                tag=StatusTag.WARN,
+                event="vlm_reread_skipped",
+                stage="vlm_reread",
+                job_id=context.job_id,
+                doc_sha256=context.doc_sha256,
+                details={"field": name, "page_number": page_number, "bbox": bbox.as_list()},
+                message=(
+                    f"{name}: critical field region on page {page_number} not re-read "
+                    "(no vision reader configured); Decisions predicate only"
+                ),
+            )
+            return
+        ocr = context.ocr_results[page_number]
+        covered = [region for region in ocr.regions if _center_inside(region.bbox, bbox)]
+        ocr_text = "\n".join(region.text for region in covered)
+        ocr_confidence = (
+            min(region.confidence for region in covered) if covered else ocr.mean_confidence
+        )
+        context.rereads.append(
+            self._reread_bbox(
+                vision, context, page_number, bbox, ocr_text, ocr_confidence, TRIGGER_CRITICAL_FIELD
+            )
+        )
+
+    def _route_unlocated(self, ref: _EvidenceRef, context: _DocumentContext) -> None:
+        """Flag a field whose scanned evidence region cannot be measured.
+
+        Parameters
+        ----------
+        ref : _EvidenceRef
+            Evidence and its dependent fields.
+        context : _DocumentContext
+            Working state (job and hash).
+
+        Notes
+        -----
+        Happens only when neither the OCR regions, the evidence box nor the
+        page rectangle are available; the field is never auto-approved.
+        """
+        reason = (
+            f"Evidence region on scanned page {ref.evidence.page_number} could not be located; "
+            "VLM re-read and Decisions predicate not run"
+        )
+        for dependent in ref.dependents:
+            dependent.flag_for_review(reason)
+        log_event(
+            _LOGGER,
+            tag=StatusTag.REVIEW_REQUIRED,
+            event="evidence_region_unavailable",
+            stage="escalation",
+            job_id=context.job_id,
+            doc_sha256=context.doc_sha256,
+            details={"field": ref.name, "page_number": ref.evidence.page_number},
+            message=f"{ref.name}: {reason}",
+        )
 
     @staticmethod
     def _attach_rereads(evidence: Evidence, rereads: list[_RegionReread]) -> None:
@@ -2896,19 +2995,23 @@ class PipelineOrchestrator:
         result : VerifierResult
             Decisions predicate result.
         rereads : list of _RegionReread
-            VLM re-reads of the regions overlapping the evidence.
+            Re-reads of the field's own region (:meth:`_own_rereads`);
+            shared full-page re-reads are never included.
         context : _DocumentContext
             Working state (job and hash).
         trigger_note : str or None, default None
             Why an evidence with OCR confidence at or above the threshold was
-            escalated (for example a low page legibility score); ``None``
-            means the OCR confidence itself was below the threshold.
+            escalated (for example a critical field on a scanned page);
+            ``None`` means the OCR confidence itself was below the threshold.
 
         Notes
         -----
-        Review is required when the calibrated confidence is below
-        ``verifier_confidence_threshold``, when the VLM judged the region not
-        fully legible, or when the VLM re-read failed. A VLM correction that
+        Review is decided per field from facts about its own value: the
+        calibrated confidence is below ``verifier_confidence_threshold``,
+        the VLM judged the field's own region not fully legible, or the VLM
+        re-read of that region failed. A ``legible=false`` verdict on a box
+        that covers the whole text area of the page (:meth:`_is_page_level`)
+        is not a fact about one field and never flags it by itself. A VLM correction that
         disagrees with OCR is accepted without review only when Decisions
         confirms it at or above the threshold (``[OK] vlm_correction_confirmed``).
         When low OCR confidence and low Decisions confidence are the only
@@ -2920,7 +3023,13 @@ class PipelineOrchestrator:
         threshold = self._settings.verifier_confidence_threshold
         low_decisions = result.calibrated_confidence < threshold
         corrected = any(item.applied for item in rereads)
-        illegible = [item for item in rereads if item.result is not None and not item.result.legible]
+        illegible = [
+            item
+            for item in rereads
+            if item.result is not None
+            and not item.result.legible
+            and not self._is_page_level(context, item.page_number, item.bbox)
+        ]
         failed = [item for item in rereads if item.error is not None]
         facts = (
             f"OCR confidence {ocr_confidence:.2f}; Decisions p={result.probability:.2f}, "
@@ -3277,7 +3386,6 @@ class PipelineOrchestrator:
             },
             "vlm_reads": context.vlm_log,
             "verifier_responses": context.verifier_log,
-            "decision_scores": context.score_log,
         }
         path = self._repository.save_cache(context.doc_sha256, payload)
         log_event(
@@ -3411,8 +3519,8 @@ def build_orchestrator(settings: Settings, *, live: bool) -> PipelineOrchestrato
     PipelineOrchestrator
         Orchestrator whose cache hits are served by deterministic providers
         and, when ``live`` and an API key are available, whose cache misses
-        use OpenAI providers (extraction, vision re-read, Decisions predicate
-        and page scores) with RapidOCR for scanned pages.
+        use OpenAI providers (extraction, vision re-read and the Decisions
+        predicate) with RapidOCR for scanned pages.
 
     Notes
     -----
@@ -3426,7 +3534,6 @@ def build_orchestrator(settings: Settings, *, live: bool) -> PipelineOrchestrato
         verifier=DeterministicVerifierProvider(repository),
         llm=CachedLLMProvider(repository),
         vision=DeterministicVLMProvider(repository),
-        scorer=DeterministicDecisionsScorer(repository),
     )
     registry = DocumentRegistry.default()
     live_bundle: Optional[ProviderBundle] = None
@@ -3436,7 +3543,6 @@ def build_orchestrator(settings: Settings, *, live: bool) -> PipelineOrchestrato
             verifier=build_verifier_provider(settings, repository, True),
             llm=build_llm_provider(settings, repository, True, registry),
             vision=build_vision_provider(settings, repository, True),
-            scorer=build_decision_scorer(settings, repository, True),
         )
     elif live:
         log_event(

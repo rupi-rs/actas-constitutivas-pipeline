@@ -216,7 +216,7 @@ def test_two_line_quote_triggers_escalation_and_keeps_grounding_cap(
         bundle = ProviderBundle(ocr=cached.ocr, verifier=verifier, llm=cached.llm)
         orchestrator = build_custom_orchestrator(settings, bundle, None)
         context = _scanned_context(ocr)
-        orchestrator._escalate(raw, verifier, context)
+        orchestrator._escalate(raw, verifier, None, context)
         assert verifier.calls >= 1
         assert raw.capital_social_actual.evidence is not None
         assert raw.capital_social_actual.evidence.confidence_score == pytest.approx(expected)
@@ -287,7 +287,7 @@ def test_verifier_refusal_routes_field_to_review(
     bundle = ProviderBundle(ocr=cached.ocr, verifier=verifier, llm=cached.llm)
     orchestrator = build_custom_orchestrator(settings, bundle, None)
     context = _scanned_context(_two_line_ocr())
-    assert orchestrator._escalate(raw, verifier, context) == 0
+    assert orchestrator._escalate(raw, verifier, None, context) == 0
     assert context.verifier_failures == 1
     assert raw.capital_social_actual.requires_human_review is True
     reason = raw.capital_social_actual.review_reason or ""
@@ -304,6 +304,9 @@ def test_scanned_capital_escalation_sends_region_crop(
 ) -> None:
     """Acta B escalation passes a 200 dpi PNG crop of the padded capital bbox.
 
+    The capital (low OCR) and the two critical fields of the administration
+    clause (representatives and powers) are each verified on their own crop.
+
     Parameters
     ----------
     settings : object
@@ -315,8 +318,8 @@ def test_scanned_capital_escalation_sends_region_crop(
     orchestrator = build_custom_orchestrator(settings, cached, None)
     result = orchestrator.process_document(sample_paths["acta_b"])
     assert result.output.capital_social_actual.requires_human_review is True
-    assert spy_verifier.calls == 1
-    crop = spy_verifier.images[0]
+    assert spy_verifier.calls == 3
+    crop = spy_verifier.images[-1]
     assert crop is not None and crop.startswith(b"\x89PNG")
     with Image.open(io.BytesIO(crop)) as image:
         width, height = image.size
@@ -405,7 +408,7 @@ def test_low_confidence_revocation_event_flags_dependent_fields(
     assert event.evidence.confidence_score == pytest.approx(0.60)
     assert event.evidence.confidence_source is ConfidenceSource.OCR_ENGINE
     assert event.evidence.bounding_box is not None
-    orchestrator._escalate(raw, verifier, context)
+    orchestrator._escalate(raw, verifier, None, context)
     orchestrator._route_amendment_confidence(raw, context)
     assert verifier.calls >= 1
     assert event.evidence.confidence_source is ConfidenceSource.DECISIONS_PREDICATE

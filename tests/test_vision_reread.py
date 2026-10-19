@@ -21,7 +21,6 @@ from src.providers.interfaces import (
     PageContent,
     VisionReadResult,
 )
-from src.providers.decision_scorer import DeterministicDecisionsScorer
 from src.providers.llm_provider import CachedLLMProvider, OpenAILLMProvider
 from src.providers.ocr_provider import DeterministicOCRProvider
 from src.providers.verifier_provider import (
@@ -446,10 +445,10 @@ def test_deterministic_acta_b_reason_is_exact_and_crop_written(
     assert crop.is_file() and crop.read_bytes().startswith(b"\x89PNG")
 
 
-def test_only_low_confidence_scanned_regions_are_reread(
+def test_only_scanned_low_confidence_and_critical_regions_are_reread(
     settings: Settings, sample_paths: dict[str, Path]
 ) -> None:
-    """Acta B re-reads only its 0.72 region; native Actas A and C are never re-read.
+    """Acta B re-reads its 0.72 region and its critical-field region; native Actas never.
 
     Parameters
     ----------
@@ -463,7 +462,7 @@ def test_only_low_confidence_scanned_regions_are_reread(
         orchestrator.process_document(sample_paths[acta_id])
     assert vision.calls == []
     orchestrator.process_document(sample_paths["acta_b"])
-    assert len(vision.calls) == 1
+    assert [call[1] for call in vision.calls] == [list(ACTA_B_CAPITAL_BBOX), [72.0, 565.0, 540.0, 615.0]]
     page_number, bbox, crop, ocr_text = vision.calls[0]
     assert page_number == 2 and bbox == list(ACTA_B_CAPITAL_BBOX)
     assert crop is not None and crop.startswith(b"\x89PNG")
@@ -602,7 +601,6 @@ def test_live_miss_persists_vlm_reads_round_trip(
         verifier=DeterministicVerifierProvider(live_repo),
         llm=SpyLLM(CachedLLMProvider(live_repo)),
         vision=DeterministicVLMProvider(live_repo),
-        scorer=DeterministicDecisionsScorer(live_repo),
     )
     repository = FileSystemRepository(settings)
     cached = ProviderBundle(
@@ -616,7 +614,7 @@ def test_live_miss_persists_vlm_reads_round_trip(
     persisted = json.loads(path.read_text(encoding="utf-8"))
     assert persisted["vlm_reads"] == payload["vlm_reads"]
     assert persisted["ocr_pages"] == payload["ocr_pages"]
-    assert persisted["decision_scores"] == payload["decision_scores"]
+    assert "decision_scores" not in persisted
     replayed = DeterministicVLMProvider(repository).reread_region(
         first.doc_sha256, 2, BoundingBox.from_sequence(list(ACTA_B_CAPITAL_BBOX)), None, ""
     )
