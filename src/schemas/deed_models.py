@@ -157,6 +157,30 @@ class Evidence(StrictModel):
         Set by the deterministic grounding check.
     bounding_box : BoundingBox or None, default None
         Location of the quote on the page, when known.
+    ocr_reading : str or None, default None
+        Schema extension beyond spec 01: Tier 1 OCR text of the
+        low-confidence region the evidence lies in.
+    vlm_reading : str or None, default None
+        Schema extension beyond spec 01: vision-model re-read of the same
+        region crop (``None`` when the model declined to transcribe it).
+    vlm_legible : bool or None, default None
+        Schema extension beyond spec 01: whether the vision model judged
+        every character it needed visibly legible.
+    verification_probability : float or None, default None
+        Schema extension beyond spec 01: raw Decisions predicate
+        probability ``p``; the calibrated ``|2p - 1|`` is
+        ``confidence_score``.
+    crop_path : str or None, default None
+        Schema extension beyond spec 01: project-relative path of the PNG
+        crop (bbox plus 12 pt padding, 200 dpi) sent to the vision reader
+        and the Decisions verifier.
+
+    Notes
+    -----
+    The five extension fields are filled by the orchestrator only for
+    evidence inside a re-read region and are never requested from the
+    extraction LLM (see :func:`openai_strict_json_schema`). Their ``None``
+    defaults keep cached extractions and ground truth files valid.
     """
 
     page_number: int = Field(ge=1)
@@ -165,6 +189,21 @@ class Evidence(StrictModel):
     confidence_source: ConfidenceSource
     grounding_verified: bool = False
     bounding_box: Optional[BoundingBox] = None
+    ocr_reading: Optional[str] = None
+    vlm_reading: Optional[str] = None
+    vlm_legible: Optional[bool] = None
+    verification_probability: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    crop_path: Optional[str] = None
+
+
+PIPELINE_EVIDENCE_FIELDS: tuple[str, ...] = (
+    "ocr_reading",
+    "vlm_reading",
+    "vlm_legible",
+    "verification_probability",
+    "crop_path",
+)
+"""Evidence fields filled by the pipeline and excluded from the LLM schema."""
 
 
 class FieldWithEvidence(StrictModel, Generic[T]):
@@ -516,4 +555,32 @@ def openai_strict_json_schema(model: type[BaseModel] = RawDeedExtraction) -> dic
     from openai.lib._pydantic import to_strict_json_schema
 
     schema: dict[str, Any] = _strip_defaults(to_strict_json_schema(model))
+    _strip_pipeline_evidence_fields(schema)
     return schema
+
+
+def _strip_pipeline_evidence_fields(schema: dict[str, Any]) -> None:
+    """Remove pipeline-filled evidence properties from a strict schema.
+
+    Parameters
+    ----------
+    schema : dict of str to Any
+        Strict JSON schema, mutated in place.
+
+    Notes
+    -----
+    The ``Evidence`` definition loses :data:`PIPELINE_EVIDENCE_FIELDS` from
+    both ``properties`` and ``required``, so the extraction LLM is never
+    asked to self-report OCR or vision readings and the strict schema stays
+    identical to the one used before the VLM re-read extension.
+    """
+    definitions = schema.get("$defs") or {}
+    evidence = definitions.get("Evidence")
+    if not isinstance(evidence, dict):
+        return
+    properties = evidence.get("properties") or {}
+    for name in PIPELINE_EVIDENCE_FIELDS:
+        properties.pop(name, None)
+    evidence["required"] = [
+        name for name in evidence.get("required") or [] if name not in PIPELINE_EVIDENCE_FIELDS
+    ]

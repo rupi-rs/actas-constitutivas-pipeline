@@ -70,6 +70,48 @@ def save_json(path: Path, payload: Any) -> Path:
     return target
 
 
+def save_bytes(path: Path, data: bytes) -> Path:
+    """Atomically write a binary file.
+
+    Parameters
+    ----------
+    path : Path
+        Destination file; parent directories are created.
+    data : bytes
+        Content to write.
+
+    Returns
+    -------
+    Path
+        The written path.
+
+    Raises
+    ------
+    StorageError
+        If writing fails.
+    """
+    target = Path(path)
+    tmp_name: Optional[str] = None
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.", suffix=".tmp")
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, target)
+        tmp_name = None
+    except OSError as exc:
+        raise StorageError(
+            f"failed to write file: {target}", {"path": str(target), "error": str(exc)}
+        ) from exc
+    finally:
+        if tmp_name is not None:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_name)
+    return target
+
+
 def _read_json(path: Path) -> Any:
     """Read and parse a UTF-8 JSON file.
 
@@ -211,6 +253,30 @@ class FileSystemRepository(BaseStorageRepository):
         _validate_identifier(acta_id, "acta_id")
         payload = output.model_dump(mode="json", by_alias=True)
         return save_json(self._settings.outputs_dir / f"{acta_id}.json", payload)
+
+    def save_crop(self, crop_name: str, image_png: bytes) -> str:
+        """Persist a verification crop as ``outputs/crops/{crop_name}``.
+
+        Parameters
+        ----------
+        crop_name : str
+            File name (for example ``"acta_b_p2_capital_social_actual_bbox.png"``).
+        image_png : bytes
+            PNG crop.
+
+        Returns
+        -------
+        str
+            Path relative to the project root, with forward slashes.
+
+        Raises
+        ------
+        StorageError
+            If the name is unsafe or writing fails.
+        """
+        _validate_identifier(crop_name, "crop_name")
+        path = save_bytes(self._settings.outputs_dir / "crops" / crop_name, image_png)
+        return path.relative_to(self._settings.project_root).as_posix()
 
     def load_output(self, acta_id: str) -> Optional[dict[str, Any]]:
         """Load a final output as a JSON dictionary.
