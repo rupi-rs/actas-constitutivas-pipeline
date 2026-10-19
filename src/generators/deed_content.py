@@ -74,6 +74,9 @@ ACTA_B_VERIFIER_PROBABILITY: float = 0.78
 ACTA_B_VERIFIER_PREDICATE: str = "The capital social amount on page 2 equals $250,000.00 MXN"
 """Predicate evaluated by the verifier for the Acta B capital clause."""
 
+VLM_ENGINE_NAME: str = "deterministic-vlm-v1"
+"""Engine identifier recorded in the cached VLM re-reads."""
+
 ACTA_B_SEAL_TEXT: str = "[SELLO NOTARIAL ILEGIBLE - COPIA CERTIFICADA]"
 """Text printed inside the simulated notarial seal on Acta B page 2."""
 
@@ -1351,6 +1354,49 @@ def build_verifier_responses(spec: DeedSpec) -> list[dict[str, Any]]:
             "probability": ACTA_B_VERIFIER_PROBABILITY,
         }
     ]
+
+
+def build_vlm_reads(spec: DeedSpec, ocr_threshold: float = 0.85) -> list[dict[str, Any]]:
+    """Build the cached VLM re-reads of every low-confidence raster region.
+
+    Parameters
+    ----------
+    spec : DeedSpec
+        Deed specification.
+    ocr_threshold : float, default 0.85
+        OCR confidence below which a region is re-read.
+
+    Returns
+    -------
+    list of dict
+        One ``{page_number, bbox, reading, legible, engine}`` entry per
+        region below the threshold (only the Acta B capital clause).
+
+    Notes
+    -----
+    The cache simulates the spec-02 scenario: the cached re-read agrees with
+    the OCR text (``legible=True``), so the Acta B review is triggered by the
+    Decisions predicate (``p = 0.78``, calibrated ``0.56``) and its reason
+    stays exactly the spec string. Live mode measures the real behaviour of
+    the vision model on the sealed crop instead.
+    """
+    reads: list[dict[str, Any]] = []
+    for number, page in enumerate(spec.pages, start=1):
+        if not isinstance(page, RasterPageSpec):
+            continue
+        for region in page.regions:
+            if region.ocr_confidence >= ocr_threshold:
+                continue
+            reads.append(
+                {
+                    "page_number": number,
+                    "bbox": list(region.bbox),
+                    "reading": region.text,
+                    "legible": True,
+                    "engine": VLM_ENGINE_NAME,
+                }
+            )
+    return reads
 
 
 # Section: ground truth

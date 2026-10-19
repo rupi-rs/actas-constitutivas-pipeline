@@ -29,7 +29,10 @@ Text layout
 Cache file format (``data/cache/{sha256}.json``)
     ``{"doc_sha256", "document_filename", "acta_id", "document_type",
     "model_version": "pre-verified-cache-v1", "raw_extraction",
-    "ocr_pages": {"<page>": OCRResult}, "verifier_responses": [...]}``.
+    "ocr_pages": {"<page>": OCRResult}, "vlm_reads": [...],
+    "verifier_responses": [...]}``. ``vlm_reads`` holds one
+    ``{page_number, bbox, reading, legible, engine}`` entry per OCR region
+    below 0.85 (the simulated vision re-read).
     ``raw_extraction`` is a validated :class:`RawDeedExtraction` dumped
     with ``model_dump(by_alias=True, mode="json")``.
 
@@ -112,6 +115,7 @@ from src.generators.deed_content import (
     build_ground_truth_fields,
     build_ocr_result,
     build_verifier_responses,
+    build_vlm_reads,
 )
 from src.schemas.deed_models import Evidence, FieldWithEvidence, RawDeedExtraction
 
@@ -597,6 +601,7 @@ def build_cache_payload(spec: DeedSpec, doc_sha256: str) -> dict[str, Any]:
         "model_version": CACHE_MODEL_VERSION,
         "raw_extraction": validated.model_dump(by_alias=True, mode="json"),
         "ocr_pages": ocr_pages,
+        "vlm_reads": build_vlm_reads(spec),
         "verifier_responses": build_verifier_responses(spec),
     }
 

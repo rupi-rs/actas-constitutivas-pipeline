@@ -14,7 +14,12 @@
         "confidence_score": 1.0,
         "confidence_source": "native_pdf",
         "grounding_verified": false,
-        "bounding_box": null
+        "bounding_box": null,
+        "ocr_reading": null,
+        "vlm_reading": null,
+        "vlm_legible": null,
+        "verification_probability": null,
+        "crop_path": null
       },
       "requires_human_review": false,
       "review_reason": null
@@ -28,7 +33,12 @@
         "confidence_score": 1.0,
         "confidence_source": "native_pdf",
         "grounding_verified": false,
-        "bounding_box": null
+        "bounding_box": null,
+        "ocr_reading": null,
+        "vlm_reading": null,
+        "vlm_legible": null,
+        "verification_probability": null,
+        "crop_path": null
       },
       "requires_human_review": false,
       "review_reason": null
@@ -42,7 +52,12 @@
         "confidence_score": 1.0,
         "confidence_source": "native_pdf",
         "grounding_verified": false,
-        "bounding_box": null
+        "bounding_box": null,
+        "ocr_reading": null,
+        "vlm_reading": null,
+        "vlm_legible": null,
+        "verification_probability": null,
+        "crop_path": null
       },
       "requires_human_review": false,
       "review_reason": null
@@ -60,7 +75,12 @@
         "confidence_score": 1.0,
         "confidence_source": "native_pdf",
         "grounding_verified": false,
-        "bounding_box": null
+        "bounding_box": null,
+        "ocr_reading": null,
+        "vlm_reading": null,
+        "vlm_legible": null,
+        "verification_probability": null,
+        "crop_path": null
       },
       "requires_human_review": false,
       "review_reason": null
@@ -79,7 +99,12 @@
             "confidence_score": 1.0,
             "confidence_source": "native_pdf",
             "grounding_verified": false,
-            "bounding_box": null
+            "bounding_box": null,
+            "ocr_reading": null,
+            "vlm_reading": null,
+            "vlm_legible": null,
+            "verification_probability": null,
+            "crop_path": null
           }
         },
         {
@@ -94,7 +119,12 @@
             "confidence_score": 1.0,
             "confidence_source": "native_pdf",
             "grounding_verified": false,
-            "bounding_box": null
+            "bounding_box": null,
+            "ocr_reading": null,
+            "vlm_reading": null,
+            "vlm_legible": null,
+            "verification_probability": null,
+            "crop_path": null
           }
         }
       ],
@@ -105,7 +135,12 @@
         "confidence_score": 1.0,
         "confidence_source": "native_pdf",
         "grounding_verified": false,
-        "bounding_box": null
+        "bounding_box": null,
+        "ocr_reading": null,
+        "vlm_reading": null,
+        "vlm_legible": null,
+        "verification_probability": null,
+        "crop_path": null
       },
       "requires_human_review": false,
       "review_reason": null
@@ -124,7 +159,12 @@
             "confidence_score": 1.0,
             "confidence_source": "native_pdf",
             "grounding_verified": false,
-            "bounding_box": null
+            "bounding_box": null,
+            "ocr_reading": null,
+            "vlm_reading": null,
+            "vlm_legible": null,
+            "verification_probability": null,
+            "crop_path": null
           }
         },
         {
@@ -139,7 +179,12 @@
             "confidence_score": 1.0,
             "confidence_source": "native_pdf",
             "grounding_verified": false,
-            "bounding_box": null
+            "bounding_box": null,
+            "ocr_reading": null,
+            "vlm_reading": null,
+            "vlm_legible": null,
+            "verification_probability": null,
+            "crop_path": null
           }
         },
         {
@@ -154,7 +199,12 @@
             "confidence_score": 1.0,
             "confidence_source": "native_pdf",
             "grounding_verified": false,
-            "bounding_box": null
+            "bounding_box": null,
+            "ocr_reading": null,
+            "vlm_reading": null,
+            "vlm_legible": null,
+            "verification_probability": null,
+            "crop_path": null
           }
         }
       ],
@@ -165,7 +215,12 @@
         "confidence_score": 1.0,
         "confidence_source": "native_pdf",
         "grounding_verified": false,
-        "bounding_box": null
+        "bounding_box": null,
+        "ocr_reading": null,
+        "vlm_reading": null,
+        "vlm_legible": null,
+        "verification_probability": null,
+        "crop_path": null
       },
       "requires_human_review": false,
       "review_reason": null
@@ -183,7 +238,12 @@
             "confidence_score": 1.0,
             "confidence_source": "native_pdf",
             "grounding_verified": false,
-            "bounding_box": null
+            "bounding_box": null,
+            "ocr_reading": null,
+            "vlm_reading": null,
+            "vlm_legible": null,
+            "verification_probability": null,
+            "crop_path": null
           }
         },
         {
@@ -197,7 +257,12 @@
             "confidence_score": 1.0,
             "confidence_source": "native_pdf",
             "grounding_verified": false,
-            "bounding_box": null
+            "bounding_box": null,
+            "ocr_reading": null,
+            "vlm_reading": null,
+            "vlm_legible": null,
+            "verification_probability": null,
+            "crop_path": null
           }
         },
         {
@@ -211,7 +276,12 @@
             "confidence_score": 1.0,
             "confidence_source": "native_pdf",
             "grounding_verified": false,
-            "bounding_box": null
+            "bounding_box": null,
+            "ocr_reading": null,
+            "vlm_reading": null,
+            "vlm_legible": null,
+            "verification_probability": null,
+            "crop_path": null
           }
         },
         {
@@ -225,7 +295,12 @@
             "confidence_score": 1.0,
             "confidence_source": "native_pdf",
             "grounding_verified": false,
-            "bounding_box": null
+            "bounding_box": null,
+            "ocr_reading": null,
+            "vlm_reading": null,
+            "vlm_legible": null,
+            "verification_probability": null,
+            "crop_path": null
           }
         },
         {
@@ -239,7 +314,12 @@
             "confidence_score": 1.0,
             "confidence_source": "native_pdf",
             "grounding_verified": false,
-            "bounding_box": null
+            "bounding_box": null,
+            "ocr_reading": null,
+            "vlm_reading": null,
+            "vlm_legible": null,
+            "verification_probability": null,
+            "crop_path": null
           }
         },
         {
@@ -253,7 +333,12 @@
             "confidence_score": 1.0,
             "confidence_source": "native_pdf",
             "grounding_verified": false,
-            "bounding_box": null
+            "bounding_box": null,
+            "ocr_reading": null,
+            "vlm_reading": null,
+            "vlm_legible": null,
+            "verification_probability": null,
+            "crop_path": null
           }
         },
         {
@@ -267,7 +352,12 @@
             "confidence_score": 1.0,
             "confidence_source": "native_pdf",
             "grounding_verified": false,
-            "bounding_box": null
+            "bounding_box": null,
+            "ocr_reading": null,
+            "vlm_reading": null,
+            "vlm_legible": null,
+            "verification_probability": null,
+            "crop_path": null
           }
         },
         {
@@ -281,7 +371,12 @@
             "confidence_score": 1.0,
             "confidence_source": "native_pdf",
             "grounding_verified": false,
-            "bounding_box": null
+            "bounding_box": null,
+            "ocr_reading": null,
+            "vlm_reading": null,
+            "vlm_legible": null,
+            "verification_probability": null,
+            "crop_path": null
           }
         }
       ],
@@ -292,7 +387,12 @@
         "confidence_score": 1.0,
         "confidence_source": "native_pdf",
         "grounding_verified": false,
-        "bounding_box": null
+        "bounding_box": null,
+        "ocr_reading": null,
+        "vlm_reading": null,
+        "vlm_legible": null,
+        "verification_probability": null,
+        "crop_path": null
       },
       "requires_human_review": false,
       "review_reason": null
@@ -312,7 +412,12 @@
         "confidence_score": 1.0,
         "confidence_source": "native_pdf",
         "grounding_verified": false,
-        "bounding_box": null
+        "bounding_box": null,
+        "ocr_reading": null,
+        "vlm_reading": null,
+        "vlm_legible": null,
+        "verification_probability": null,
+        "crop_path": null
       },
       "requires_human_review": false,
       "review_reason": null
@@ -333,7 +438,12 @@
           "confidence_score": 1.0,
           "confidence_source": "native_pdf",
           "grounding_verified": false,
-          "bounding_box": null
+          "bounding_box": null,
+          "ocr_reading": null,
+          "vlm_reading": null,
+          "vlm_legible": null,
+          "verification_probability": null,
+          "crop_path": null
         },
         "revoked_appointment_evidence": []
       },
@@ -352,7 +462,12 @@
           "confidence_score": 1.0,
           "confidence_source": "native_pdf",
           "grounding_verified": false,
-          "bounding_box": null
+          "bounding_box": null,
+          "ocr_reading": null,
+          "vlm_reading": null,
+          "vlm_legible": null,
+          "verification_probability": null,
+          "crop_path": null
         },
         "revoked_appointment_evidence": []
       },
@@ -371,7 +486,12 @@
           "confidence_score": 1.0,
           "confidence_source": "native_pdf",
           "grounding_verified": false,
-          "bounding_box": null
+          "bounding_box": null,
+          "ocr_reading": null,
+          "vlm_reading": null,
+          "vlm_legible": null,
+          "verification_probability": null,
+          "crop_path": null
         },
         "revoked_appointment_evidence": []
       },
@@ -390,12 +510,18 @@
           "confidence_score": 1.0,
           "confidence_source": "native_pdf",
           "grounding_verified": false,
-          "bounding_box": null
+          "bounding_box": null,
+          "ocr_reading": null,
+          "vlm_reading": null,
+          "vlm_legible": null,
+          "verification_probability": null,
+          "crop_path": null
         },
         "revoked_appointment_evidence": []
       }
     ]
   },
   "ocr_pages": {},
+  "vlm_reads": [],
   "verifier_responses": []
 }

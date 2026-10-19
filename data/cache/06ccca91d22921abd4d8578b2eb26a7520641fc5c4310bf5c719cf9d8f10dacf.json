@@ -14,7 +14,12 @@
         "confidence_score": 1.0,
         "confidence_source": "native_pdf",
         "grounding_verified": false,
-        "bounding_box": null
+        "bounding_box": null,
+        "ocr_reading": null,
+        "vlm_reading": null,
+        "vlm_legible": null,
+        "verification_probability": null,
+        "crop_path": null
       },
       "requires_human_review": false,
       "review_reason": null
@@ -28,7 +33,12 @@
         "confidence_score": 1.0,
         "confidence_source": "native_pdf",
         "grounding_verified": false,
-        "bounding_box": null
+        "bounding_box": null,
+        "ocr_reading": null,
+        "vlm_reading": null,
+        "vlm_legible": null,
+        "verification_probability": null,
+        "crop_path": null
       },
       "requires_human_review": false,
       "review_reason": null
@@ -42,7 +52,12 @@
         "confidence_score": 1.0,
         "confidence_source": "native_pdf",
         "grounding_verified": false,
-        "bounding_box": null
+        "bounding_box": null,
+        "ocr_reading": null,
+        "vlm_reading": null,
+        "vlm_legible": null,
+        "verification_probability": null,
+        "crop_path": null
       },
       "requires_human_review": false,
       "review_reason": null
@@ -60,7 +75,12 @@
         "confidence_score": 1.0,
         "confidence_source": "native_pdf",
         "grounding_verified": false,
-        "bounding_box": null
+        "bounding_box": null,
+        "ocr_reading": null,
+        "vlm_reading": null,
+        "vlm_legible": null,
+        "verification_probability": null,
+        "crop_path": null
       },
       "requires_human_review": false,
       "review_reason": null
@@ -84,7 +104,12 @@
               "y1": 480.0,
               "x2": 540.0,
               "y2": 545.0
-            }
+            },
+            "ocr_reading": null,
+            "vlm_reading": null,
+            "vlm_legible": null,
+            "verification_probability": null,
+            "crop_path": null
           }
         },
         {
@@ -104,7 +129,12 @@
               "y1": 480.0,
               "x2": 540.0,
               "y2": 545.0
-            }
+            },
+            "ocr_reading": null,
+            "vlm_reading": null,
+            "vlm_legible": null,
+            "verification_probability": null,
+            "crop_path": null
           }
         }
       ],
@@ -120,7 +150,12 @@
           "y1": 480.0,
           "x2": 540.0,
           "y2": 545.0
-        }
+        },
+        "ocr_reading": null,
+        "vlm_reading": null,
+        "vlm_legible": null,
+        "verification_probability": null,
+        "crop_path": null
       },
       "requires_human_review": false,
       "review_reason": null
@@ -144,7 +179,12 @@
               "y1": 565.0,
               "x2": 540.0,
               "y2": 615.0
-            }
+            },
+            "ocr_reading": null,
+            "vlm_reading": null,
+            "vlm_legible": null,
+            "verification_probability": null,
+            "crop_path": null
           }
         }
       ],
@@ -160,7 +200,12 @@
           "y1": 565.0,
           "x2": 540.0,
           "y2": 615.0
-        }
+        },
+        "ocr_reading": null,
+        "vlm_reading": null,
+        "vlm_legible": null,
+        "verification_probability": null,
+        "crop_path": null
       },
       "requires_human_review": false,
       "review_reason": null
@@ -183,7 +228,12 @@
               "y1": 565.0,
               "x2": 540.0,
               "y2": 615.0
-            }
+            },
+            "ocr_reading": null,
+            "vlm_reading": null,
+            "vlm_legible": null,
+            "verification_probability": null,
+            "crop_path": null
           }
         },
         {
@@ -202,7 +252,12 @@
               "y1": 565.0,
               "x2": 540.0,
               "y2": 615.0
-            }
+            },
+            "ocr_reading": null,
+            "vlm_reading": null,
+            "vlm_legible": null,
+            "verification_probability": null,
+            "crop_path": null
           }
         }
       ],
@@ -218,7 +273,12 @@
           "y1": 565.0,
           "x2": 540.0,
           "y2": 615.0
-        }
+        },
+        "ocr_reading": null,
+        "vlm_reading": null,
+        "vlm_legible": null,
+        "verification_probability": null,
+        "crop_path": null
       },
       "requires_human_review": false,
       "review_reason": null
@@ -243,7 +303,12 @@
           "y1": 410.0,
           "x2": 520.0,
           "y2": 455.0
-        }
+        },
+        "ocr_reading": null,
+        "vlm_reading": null,
+        "vlm_legible": null,
+        "verification_probability": null,
+        "crop_path": null
       },
       "requires_human_review": false,
       "review_reason": null
@@ -264,7 +329,12 @@
           "confidence_score": 1.0,
           "confidence_source": "native_pdf",
           "grounding_verified": false,
-          "bounding_box": null
+          "bounding_box": null,
+          "ocr_reading": null,
+          "vlm_reading": null,
+          "vlm_legible": null,
+          "verification_probability": null,
+          "crop_path": null
         },
         "revoked_appointment_evidence": []
       }
@@ -360,6 +430,20 @@
       "engine": "deterministic-ocr-v1"
     }
   },
+  "vlm_reads": [
+    {
+      "page_number": 2,
+      "bbox": [
+        72.0,
+        410.0,
+        520.0,
+        455.0
+      ],
+      "reading": "QUINTA.- El capital social es de $250,000.00 (DOSCIENTOS CINCUENTA MIL PESOS 00/100 M.N.).",
+      "legible": true,
+      "engine": "deterministic-vlm-v1"
+    }
+  ],
   "verifier_responses": [
     {
       "page_number": 2,
