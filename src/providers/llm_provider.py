@@ -1,6 +1,7 @@
 """Structured-extraction LLM providers and anti-injection prompts.
 
-Live extraction uses OpenAI Structured Outputs bound to
+Live extraction uses OpenAI Structured Outputs through the Responses API
+(``text.format`` of type ``json_schema`` with ``strict: true``) bound to
 :class:`RawDeedExtraction`; the deterministic fallback replays the
 pre-verified raw extraction stored in the SHA-256 cache. Both return the
 PRE-RESOLUTION extraction: the temporal resolver, validators and grounding
@@ -100,12 +101,18 @@ PRE-RESOLUTION SEMANTICS
 Do not resolve revocations, supersessions or current state yourself. In \
 representantes_legales and poderes list EVERY person and power that is granted or \
 appointed anywhere in the document, including persons whose powers are later revoked, \
-each with vigente true. Create one poderes item per power type per person. In \
+each with vigente true. Create one poderes item per power type per person, using the \
+canonical tipo_poder names "Poder General para Pleitos y Cobranzas", "Poder General para \
+Actos de Administración" and "Poder General para Actos de Dominio". A combined grant such \
+as "PODER GENERAL PARA PLEITOS Y COBRANZAS Y ACTOS DE ADMINISTRACION" confers two power \
+types and yields two poderes items, each citing the sentence that grants them. In \
 capital_social_actual report the capital stated by the original incorporation act, not \
 the capital after later amendments; later capital changes belong only in \
 amendment_history. Keep names exactly as written in the document in nombre, and put an \
 accent-free, uppercase form without titles (LIC., SR., ING., C.P., DR.) in \
-nombre_normalizado. Dates in fecha_nombramiento and fecha_constitucion are YYYY-MM-DD.
+nombre_normalizado. Dates in fecha_nombramiento and fecha_constitucion are YYYY-MM-DD. \
+razon_social is the denomination followed by the abbreviation of the corporate regime as \
+written in the deed, for example "EJEMPLO DEL NORTE, S.A. DE C.V.".
 
 OUTPUT RULES
 Return only the JSON object required by the schema. Use null for absent optional \
@@ -202,7 +209,7 @@ def build_user_prompt(
 
 
 class OpenAILLMProvider(BaseLLMProvider):
-    """Live extraction through OpenAI Structured Outputs.
+    """Live extraction through the Responses API with Structured Outputs.
 
     Parameters
     ----------
@@ -234,7 +241,8 @@ class OpenAILLMProvider(BaseLLMProvider):
         """
         if not settings.openai_api_key:
             raise ExtractionError("OPENAI_API_KEY is required for live extraction")
-        self._model = settings.openai_model
+        self._model = settings.openai_extraction_model
+        self._temperature = settings.openai_extraction_temperature
         self._registry = registry
         self._client = openai.OpenAI(
             api_key=settings.openai_api_key, max_retries=0, timeout=_REQUEST_TIMEOUT_SECONDS
@@ -247,7 +255,7 @@ class OpenAILLMProvider(BaseLLMProvider):
         reraise=True,
     )
     def _complete(self, user_prompt: str) -> Any:
-        """Call the chat completions endpoint with a strict JSON schema.
+        """Call the Responses API with a strict JSON schema text format.
 
         Parameters
         ----------
@@ -257,24 +265,76 @@ class OpenAILLMProvider(BaseLLMProvider):
         Returns
         -------
         Any
-            SDK completion object.
+            SDK ``Response`` object.
+
+        Notes
+        -----
+        ``temperature`` is sent only when ``OPENAI_EXTRACTION_TEMPERATURE`` is
+        configured, because some models accept only their default value.
         """
-        return self._client.chat.completions.create(
+        options: dict[str, Any] = {}
+        if self._temperature is not None:
+            options["temperature"] = self._temperature
+        return self._client.responses.create(
             model=self._model,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
+            input=[
+                {"role": "developer", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
-            response_format={
-                "type": "json_schema",
-                "json_schema": {
+            text={
+                "format": {
+                    "type": "json_schema",
                     "name": _SCHEMA_NAME,
                     "strict": True,
                     "schema": openai_strict_json_schema(),
-                },
+                }
             },
-            temperature=0,
+            store=False,
+            **options,
         )
+
+    @staticmethod
+    def _response_text(response: Any) -> str:
+        """Return the structured output text of a Responses API result.
+
+        Parameters
+        ----------
+        response : Any
+            SDK ``Response`` object.
+
+        Returns
+        -------
+        str
+            Aggregated ``output_text``.
+
+        Raises
+        ------
+        ExtractionError
+            If the response is incomplete or failed, contains a refusal, or
+            carries no output text.
+        """
+        status = getattr(response, "status", None)
+        if status is not None and status != "completed":
+            details = getattr(response, "incomplete_details", None)
+            reason = getattr(details, "reason", None) if details is not None else None
+            error = getattr(response, "error", None)
+            raise ExtractionError(
+                f"extraction response status is {status}",
+                {"status": str(status), "reason": str(reason), "error": str(error)},
+            )
+        for item in getattr(response, "output", None) or []:
+            if getattr(item, "type", None) != "message":
+                continue
+            for part in getattr(item, "content", None) or []:
+                if getattr(part, "type", None) == "refusal":
+                    raise ExtractionError(
+                        "model refused the extraction request",
+                        {"refusal": str(getattr(part, "refusal", ""))},
+                    )
+        text = getattr(response, "output_text", None)
+        if not isinstance(text, str) or not text.strip():
+            raise ExtractionError("model returned no content for the extraction request")
+        return text
 
     def extract(
         self, doc_sha256: str, pages: list[PageContent], document_type: str
@@ -298,26 +358,18 @@ class OpenAILLMProvider(BaseLLMProvider):
         Raises
         ------
         ExtractionError
-            On API failure, model refusal, or unparseable output.
+            On API failure, incomplete response, model refusal, or output
+            that does not validate against :class:`RawDeedExtraction`.
         """
         started = time.perf_counter()
         prompt = build_user_prompt(build_pages_xml(pages), document_type, self._registry)
         try:
-            completion = self._complete(prompt)
+            response = self._complete(prompt)
         except openai.OpenAIError as exc:
             raise ExtractionError(
                 "OpenAI extraction request failed", {"error": str(exc)}
             ) from exc
-        try:
-            message = completion.choices[0].message
-        except (AttributeError, IndexError, TypeError) as exc:
-            raise ExtractionError("OpenAI response contained no choices") from exc
-        refusal = getattr(message, "refusal", None)
-        if refusal:
-            raise ExtractionError("model refused the extraction request", {"refusal": str(refusal)})
-        content = getattr(message, "content", None)
-        if not isinstance(content, str) or not content.strip():
-            raise ExtractionError("model returned no content for the extraction request")
+        content = self._response_text(response)
         try:
             parsed = RawDeedExtraction.model_validate_json(content)
         except PydanticValidationError as exc:
@@ -332,7 +384,13 @@ class OpenAILLMProvider(BaseLLMProvider):
             stage="extraction",
             doc_sha256=doc_sha256,
             duration_ms=(time.perf_counter() - started) * 1000.0,
-            details={"model": self._model, "pages": len(pages), "document_type": document_type},
+            details={
+                "model": self._model,
+                "pages": len(pages),
+                "document_type": document_type,
+                "input_tokens": getattr(getattr(response, "usage", None), "input_tokens", None),
+                "output_tokens": getattr(getattr(response, "usage", None), "output_tokens", None),
+            },
             message=f"structured extraction completed with {version}",
         )
         return parsed, version
