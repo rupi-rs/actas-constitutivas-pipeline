@@ -57,7 +57,27 @@ Mediciones del 2026-10-18 con `gpt-6-luna`. Extracción (Responses API) y verifi
 
 Lectura de los resultados: el verificador real duda (y se inclina por "no") cuando la tinta efectivamente oculta las cifras, y es confiado cuando el monto es legible. Con solo el texto OCR responde con `p = 0.99`, lo que confirma que el texto OCR no debe tratarse como prueba y que el recorte de imagen es indispensable en la solicitud. La extracción se muestrea con la temperatura por defecto del modelo, por lo que la calificación puede variar entre ejecuciones; con tres documentos estas cifras no son una estimación estadística de la tasa de error.
 
-La relectura VLM de regiones con baja confianza OCR forma parte del diseño (ver [ARCHITECTURE_AND_DESIGN.md](ARCHITECTURE_AND_DESIGN.md)); no se reportan métricas de esa etapa porque no hay ejecuciones medidas.
+### Verificación Decisions: `test-decisions` (2026-10-19)
+
+`actas-cli test-decisions --live` ejecuta cuatro casos contra la API Decisions real; con `--no-live` las respuestas son simuladas y el reporte las declara (`simulated: true`). Reportes: [`results/decisions_verification_report_live.json`](../results/decisions_verification_report_live.json) y [`results/decisions_verification_report_simulated.json`](../results/decisions_verification_report_simulated.json).
+
+| Caso | En vivo | Simulado | Veredicto esperado |
+|------|---------|----------|--------------------|
+| Predicado sobre texto limpio del capital | `p = 1.00` | `p = 0.98` | CONFIRMED |
+| Predicado sobre el recorte sellado del Acta B | `p = 0.48`, `abs(2p - 1) = 0.04` | `p = 0.78`, 0.56 | REVIEW |
+| Predicado de contradicción: representante revocado del Acta C | `p = 0.00` | `p = 0.03` | REJECTED |
+| Riesgo de inyección de instrucciones | normalizado 0.997 (coincidencias de regex `ignore_previous_instructions`, `force_approval`, `skip_human_review`) | normalizado 0.9367 | FLAGGED |
+
+Los cuatro casos en vivo usaron 1,891 tokens de entrada (unos USD 0.0002). Una solicitud de legibilidad e inyección de página completa usa unos 4.5 mil tokens de entrada (unos USD 0.00045).
+
+### Relectura VLM y Acta B completa en vivo con RapidOCR real
+
+Sesión en vivo, octubre de 2026, `gpt-6-luna`:
+
+- **Relectura VLM del recorte sellado:** `{"reading": "QUINTA.- El capital social es de $ MIL PESOS 00/100 M.N.).", "legible": false}`. Sobre un recorte limpio del Acta A la lectura fue exacta con `legible = true`.
+- **Hallazgo sobre el OCR real:** RapidOCR lee la página sellada del Acta B con confianza mayor o igual a 0.90 y omite en silencio `$250,000.00 (DOSCIENTOS CINCUENTA`; la confianza del Nivel 1 no detecta omisiones y el umbral de 0.85 nunca se dispara. La legibilidad normalizada de Decisions sí lo detecta: 0.33 en la página 2 del Acta B frente a 0.997 en la página 1 del Acta A, con umbral 0.75.
+- **Flujo completo:** legibilidad 0.33; la primera extracción dejó capital y `poderes` como `no_encontrado`; la relectura VLM de página completa devolvió `legible = false` con la transcripción visible; una reextracción obtuvo capital 250,000.00 con `monto_en_letra` `[ilegible] MIL PESOS 00/100 M.N.`; Decisions sobre el recorte grueso de página completa dio `p = 0.98` (frente a 0.48 con el recorte ajustado); el capital se envió a revisión por la discrepancia número frente a letra y `legible = false`.
+- **Limitación:** la fusión a página completa entrega al predicado un recorte grueso, por lo que la revisión provino de las verificaciones determinísticas y no del predicado. RapidOCR se ejercitó en vivo una sola vez; no hay una evaluación más amplia de OCR ni de relectura VLM.
 
 ## 3. Asimetría de errores
 
@@ -76,7 +96,11 @@ El sistema no "adivina": cuando la evidencia no alcanza, conserva el valor extra
 
 | Criterio | Regla | Efecto |
 |----------|-------|--------|
-| Confianza OCR | Región de evidencia con confianza < 0.85 (en citas multilínea, el mínimo de las regiones que la cubren) | Escala a Tier 2 |
+| Confianza OCR | Región de evidencia con confianza < 0.85 (en citas multilínea, el mínimo de las regiones que la cubren) | Recorte, relectura VLM y Tier 2 |
+| Legibilidad de la página | `OCR_LEGIBILITY_SCORE` normalizado < 0.75 (`PAGE_LEGIBILITY_THRESHOLD`) en una página escaneada | Los campos críticos de la página escalan a relectura VLM y predicado, aunque la confianza OCR sea alta |
+| Relectura VLM | La relectura declara `legible = false`, o falla | Revisión |
+| Relectura tardía acotada | Campo crítico requerido `no_encontrado`, o falla de valor en cita o de coherencia del capital en página escaneada | Una relectura y a lo sumo una reextracción; si no se resuelve, revisión con motivo factual |
+| Inyección de instrucciones | Prefiltro de regex (`src/pipeline/injection_guard.py`) o `PROMPT_INJECTION_RISK_SCORE` normalizado >= 0.5 (`PROMPT_INJECTION_RISK_THRESHOLD`) | `security_flags = ["prompt_injection_suspected"]`, revisión global forzada, sin aprobación automática de los campos de esa página |
 | Verificación por predicado | Confianza calibrada `abs(2p - 1)` < 0.80 | Revisión |
 | Verificador no disponible | Rechazo, respuesta ausente o error de la API Decisions | Revisión con motivo explícito |
 | Grounding | La cita no aparece en la página citada (coincidencia normalizada exacta, o `partial_ratio` >= 90 con guardas de dígitos y de palabras) | Confianza topada en 0.40 y revisión; el tope no se levanta con escalamientos posteriores |
@@ -87,7 +111,7 @@ El sistema no "adivina": cuando la evidencia no alcanza, conserva el valor extra
 | Campo requerido ausente | Requerido por el `DocumentTypeSpec` y sin valor | `no_encontrado` y revisión |
 | Confianza genérica | Cualquier evidencia con confianza < 0.80 | Revisión |
 
-Criterios adicionales del diseño, asociados a la relectura VLM: la región se declara ilegible (`legible = false`), o las lecturas OCR y VLM discrepan y Decisions no confirma con confianza alta.
+Además, cuando las lecturas OCR y VLM discrepan, la corrección solo se acepta si Decisions la confirma con `abs(2p - 1)` >= 0.80.
 
 Los umbrales son valores iniciales razonados, no calibrados. Se calibraron solo contra datos sintéticos.
 

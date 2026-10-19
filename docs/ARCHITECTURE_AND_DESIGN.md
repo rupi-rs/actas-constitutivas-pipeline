@@ -19,27 +19,32 @@ Principios de diseño:
 flowchart TD
     IN[Entrada: PDF nativo, PDF escaneado, imagen PNG/JPG] --> H[Ingesta: SHA-256 sobre bytes originales, job_id]
     H --> C{Caché por SHA-256}
-    C -->|acierto: extracción cruda desde caché| RES
+    C -->|acierto: OCR, relectura y extracción cruda desde caché| SC
     C -->|fallo| INS[Inspector por página PyMuPDF]
     INS -->|Nivel 0: >= 50 caracteres limpios| NAT[Texto nativo, confianza 1.0, costo 0]
     INS -->|< 50 caracteres o imagen| OCR[Nivel 1: OCR local con texto, confianza y bbox por región]
-    OCR -->|regiones >= 0.85| TXT
-    OCR -->|regiones < 0.85| CROP[Nivel 2: recorte físico por bbox, 200 dpi]
+    NAT --> SC
+    OCR --> SC[Puntajes Decisions por página: legibilidad e inyección de instrucciones]
+    SC -->|regiones OCR < 0.85, o campos críticos en página con legibilidad < 0.75| CROP[Recorte físico por bbox, 200 dpi]
+    SC -->|sin dudas| TXT
     CROP --> VLM[Relectura VLM gpt-6-luna: reading, legible]
     VLM --> TXT[Texto de página corregido; se conservan lecturas OCR y VLM]
-    NAT --> TXT
     TXT --> EXT[Extracción estructurada: Responses API, JSON schema estricto, páginas en XML]
     EXT --> RES[Interpretación: resolución temporal y de revocaciones]
     RES --> VAL[Validación determinística: grounding, valor en cita, número y letra, fechas, spec del tipo]
+    VAL -->|campo crítico no encontrado o chequeo fallido en página escaneada| LATE[Relectura tardía acotada y una sola reextracción]
+    LATE --> RES
     VAL --> DEC[Nivel 2: Decisions API predicate sobre el mismo recorte, abs 2p-1 frente a 0.80]
-    DEC --> ROUT{Enrutamiento}
+    DEC --> ROUT{Enrutamiento y revisión de seguridad}
     ROUT -->|sin dudas| OUT[JSON versionado con evidencia y audit_metadata]
-    ROUT -->|campo dudoso| HR[Revisión humana: motivo, cita, página y recorte PNG]
+    ROUT -->|campo dudoso o riesgo de inyección| HR[Revisión humana: motivo, cita, página y recorte PNG]
     HR --> OUT
     OUT --> ST[(Almacenamiento por capas y bitácora JSONL con PII enmascarada)]
     ST --> CONS[Consumidores: alta de cuentas, representantes, contratos, expediente]
     ST --> EV[Evaluación contra ground truth y monitoreo]
 ```
+
+Orden de etapas en el orquestador: ingesta y hash, consulta de caché, inspección por página, OCR de Nivel 1 en páginas escaneadas, puntajes Decisions por página (más el prefiltro de expresiones regulares sin conexión), relectura VLM, extracción, resolución, validación, relectura tardía acotada con a lo sumo una reextracción, verificación Decisions por predicado (Nivel 2), enrutamiento por confianza y revisión de seguridad, almacenamiento.
 
 ## 3. Niveles de lectura y escalamiento
 
@@ -47,15 +52,28 @@ flowchart TD
 |-------|--------|----------|-----------|----------------|
 | 0. Texto nativo | Página con 50 o más caracteres alfanuméricos limpios en su capa de texto (PyMuPDF) | Usa el texto del PDF tal cual | 1.0, fuente `native_pdf` | 0 (sin modelo) |
 | 1. OCR local con bbox | Página con menos de 50 caracteres limpios, o imagen | Render a 200 dpi; OCR que devuelve texto, confianza y bounding box por región | La del motor, fuente `ocr_engine` | Cómputo local |
-| 2. Recorte, relectura VLM y verificación | Región de evidencia con confianza OCR menor a 0.85 | Recorte físico por bbox (con margen de 12 pt, 200 dpi); relectura con `gpt-6-luna` visión con esquema estricto `{reading, legible}`; tras la extracción, pregunta `predicate` de la API Decisions sobre el mismo recorte | `abs(2p - 1)`, fuente `decisions_predicate` | Solo regiones dudosas |
+| 2. Recorte, relectura VLM y verificación | Región de evidencia con confianza OCR menor a 0.85, o campo crítico en una página escaneada con legibilidad normalizada menor a 0.75 | Recorte físico por bbox (con margen de 12 pt, 200 dpi); relectura con `gpt-6-luna` visión con esquema estricto `{reading, legible}`; tras la extracción, pregunta `predicate` de la API Decisions sobre el mismo recorte | `abs(2p - 1)`, fuente `decisions_predicate` | Solo regiones dudosas |
 
 **Por qué el umbral de 0.85 dispara escalamiento.** Una lectura OCR de baja confianza es exactamente donde una cifra puede cambiar sin que el texto resultante parezca anómalo. Casos típicos en escrituras: sellos y firmas encimados sobre montos, copias de copias degradadas, manchas de humedad, páginas inclinadas y textos de máquina de escribir con tipos rotos. Ejemplo: un sello sobre `$800,000.00` puede producir `$300,000.00`. El texto OCR resultante es plausible, la cita existe en el texto OCR (el grounding pasa) y el valor está en su cita; lo que delata el error es la verificación número frente a letra (`OCHOCIENTOS MIL` frente a 300,000) cuando la letra es legible, y la relectura VLM y el predicado de Decisions sobre la imagen. Por eso el texto OCR nunca se trata como prueba.
 
 **Relectura VLM.** Solo se envían los recortes de las regiones dudosas, como imagen base64, a la Responses API con esquema estricto `{reading: string|null, legible: bool}`. El texto de la página se corrige con la lectura VLM, y la evidencia conserva ambas lecturas (OCR y VLM) para auditoría. La extracción estructurada corre sobre el texto corregido.
 
-**Verificación con la API Decisions.** Después de la extracción, el valor final se verifica con una pregunta `predicate` sobre el mismo recorte (por ejemplo, "el monto del capital social en la página 2 es igual a $250,000.00 MXN"), con el texto OCR marcado como no confiable. La probabilidad `p` se mapea a `abs(2p - 1)`: un "sí" o un "no" confiados son resultados de alta confianza; un valor cercano a 0.5 significa que la imagen no permite decidir. Por debajo de 0.80 el campo va a revisión. Se agregan además preguntas de tipo `score` para dos señales de documento: `OCR_LEGIBILITY_SCORE` (legibilidad de la página o región) y `PROMPT_INJECTION_RISK_SCORE` (riesgo de que el texto intente instruir al modelo); sus umbrales son configurables y deben calibrarse con datos etiquetados.
+**Verificación con la API Decisions.** Después de la extracción, el valor final se verifica con una pregunta `predicate` sobre el mismo recorte (por ejemplo, "el monto del capital social en la página 2 es igual a $250,000.00 MXN"), con el texto OCR marcado como no confiable. La probabilidad `p` se mapea a `abs(2p - 1)`: un "sí" o un "no" confiados son resultados de alta confianza; un valor cercano a 0.5 significa que la imagen no permite decidir. Por debajo de 0.80 el campo va a revisión. 
 
-**Condiciones de revisión en el Nivel 2.** Confianza calibrada de Decisions menor a 0.80; la relectura VLM declara la región ilegible; o las lecturas OCR y VLM discrepan y Decisions no confirma el valor con confianza alta.
+**Puntajes Decisions por página (disparadores).** Antes de la extracción, cada página recibe una sola solicitud agrupada a la API Decisions con dos preguntas de tipo `score`:
+
+- `OCR_LEGIBILITY_SCORE` (solo páginas escaneadas, imagen completa): 0 ilegible, 1 parcialmente cubierta, 2 mayormente legible, 3 limpia.
+- `PROMPT_INJECTION_RISK_SCORE` (sobre el texto de la página): 0 sin instrucciones, 1 lenguaje procedimental benigno, 2 directiva sospechosa, 3 intento explícito de anular instrucciones.
+
+El puntaje se normaliza como `score / (niveles - 1)`. Los disparadores son:
+
+1. **Legibilidad.** Una legibilidad normalizada menor a `PAGE_LEGIBILITY_THRESHOLD` (0.75) escala los campos críticos de esa página (`critical_fields` del registro) a relectura VLM y predicado de Decisions, sin importar la confianza OCR. Esto cubre una limitación comprobada: la confianza del Nivel 1 no detecta omisiones. Con RapidOCR real, la página sellada del Acta B se lee con confianza mayor o igual a 0.90 y se omite en silencio `$250,000.00 (DOSCIENTOS CINCUENTA`; el umbral de 0.85 por sí solo nunca se dispara. En vivo, la legibilidad de la página 2 del Acta B fue 0.33 y la de la página 1 del Acta A, 0.997.
+2. **Relectura tardía acotada.** Si un campo crítico requerido queda `no_encontrado`, o falla el chequeo de valor en cita o de coherencia del capital en una página escaneada, se hace una relectura VLM de la región (o de la página completa) y a lo sumo una reextracción. Lo que siga sin resolverse va a revisión con un motivo factual.
+3. **Inyección de instrucciones.** El prefiltro de expresiones regulares sin conexión (`src/pipeline/injection_guard.py`) y un riesgo normalizado mayor o igual a `PROMPT_INJECTION_RISK_THRESHOLD` (0.5) fijan `audit_metadata.security_flags = ["prompt_injection_suspected"]`, fuerzan revisión humana global e impiden la aprobación automática de los campos de esa página. El texto se sigue extrayendo como dato no confiable.
+
+Costo: una solicitud de legibilidad e inyección de página completa usa unos 4.5 mil tokens de entrada (unos USD 0.00045). Los umbrales son valores iniciales y deben calibrarse con datos etiquetados.
+
+**Condiciones de revisión en el Nivel 2.** Confianza calibrada de Decisions menor a 0.80; la relectura VLM declara la región ilegible (`legible = false`) o falla; o las lecturas OCR y VLM discrepan y Decisions no confirma el valor con confianza alta. Una corrección confirmada con confianza mayor o igual a 0.80 se acepta.
 
 **Artefacto para el revisor.** El recorte de cada región escalada se guarda como `outputs/crops/{acta_id}_p{page}_{field}_bbox.png`. El revisor ve el recorte, la cita, la página, ambas lecturas y el motivo, y decide sobre el campo, no sobre el documento completo.
 
@@ -63,7 +81,7 @@ flowchart TD
 
 - **Primitiva específica.** El endpoint `POST /v1/decisions` (`client.decisions.create`, modelo `gpt-6-luna`) devuelve por pregunta una `probability` (`predicate`) o un `score` con `confidence` (`score`, `choice`) de forma directa. No hay que pedirle a un modelo generativo que escriba un número ni interpretar texto libre.
 - **Confianza verbalizada descartada.** Un `"confidence": 0.97` escrito por un modelo generativo dentro de su respuesta es texto generado, no una probabilidad, y no se usa para ninguna decisión del pipeline (detalle en [EVALUACION.md](EVALUACION.md), sección 6). El valor `llm_logprobs` existe en el enum `ConfidenceSource` por compatibilidad con la especificación, pero el pipeline no lo produce.
-- **Costo.** Facturación solo por tokens de entrada, USD 0.10 por millón, sin tokens de salida facturados. Medido: 867 tokens de entrada por verificación del Acta B, unos USD 0.00009; latencia observada de 159 a 680 ms en nueve llamadas.
+- **Costo.** Facturación solo por tokens de entrada, USD 0.10 por millón, sin tokens de salida facturados. Medido: 867 tokens de entrada por verificación del Acta B, unos USD 0.00009; latencia observada de 159 a 680 ms en nueve llamadas. Los cuatro casos de `test-decisions --live` usaron 1,891 tokens de entrada en total (unos USD 0.0002).
 - **Sin modelos de razonamiento extendido.** No se usan modelos de la serie o para extracción ni verificación: añaden latencia y costo y la tarea (leer y verificar un valor acotado) no lo requiere.
 - **La probabilidad tampoco se da por calibrada.** El umbral de 0.80 es un valor inicial; antes de producción debe calibrarse con ejemplos etiquetados según el costo de falsos positivos y falsos negativos.
 
@@ -71,20 +89,24 @@ flowchart TD
 
 ### Acta A: nativo limpio
 
-Dos páginas con capa de texto; ambas en Nivel 0, confianza 1.0. Sin OCR, sin VLM, sin Decisions, sin revisión. La extracción produce los ocho campos con evidencia en páginas 1 y 2; el grounding verifica todas las citas. Resultado: calificación 1.000 tanto en la ejecución determinística como en la ejecución en vivo (5,087 tokens de entrada, 5,101 de salida, 0 fallas de grounding en 20 evidencias).
+Dos páginas con capa de texto; ambas en Nivel 0, confianza 1.0. Sin OCR y sin relectura VLM. Los puntajes por página (solo riesgo de inyección en páginas nativas) no marcan nada. Sin predicado de Decisions y sin revisión. La extracción produce los ocho campos con evidencia en páginas 1 y 2; el grounding verifica todas las citas. Resultado: calificación 1.000 tanto en la ejecución determinística como en la ejecución en vivo (5,087 tokens de entrada, 5,101 de salida, 0 fallas de grounding en 20 evidencias).
 
 ### Acta B: página escaneada con sello sobre el capital
 
-Página 1 en Nivel 0. Página 2 es una imagen (0 caracteres limpios) y pasa a Nivel 1. La región de la cláusula de capital (bbox `[72.0, 410.0, 520.0, 455.0]`) tiene confianza OCR 0.72, menor a 0.85, y escala a Nivel 2.
+Página 1 en Nivel 0. Página 2 es una imagen (0 caracteres limpios) y pasa a Nivel 1. Después del OCR, la página 2 recibe sus puntajes Decisions (legibilidad e inyección). La región de la cláusula de capital (bbox `[72.0, 410.0, 520.0, 455.0]`) tiene confianza OCR 0.72, menor a 0.85, por lo que se recorta, se relee con el VLM y escala al predicado de Decisions (Nivel 2). En la caché determinística la relectura coincide con el texto OCR, de modo que se conserva el motivo de la especificación.
 
 - **Ejecución determinística (caché preverificada):** `p = 0.78`, confianza calibrada `abs(2 x 0.78 - 1) = 0.56`, menor a 0.80. `capital_social_actual` se conserva (250,000.00 MXN) y se envía a revisión con el motivo `Low OCR confidence (0.72) and Decisions predicate confidence (0.56 < 0.80) due to overlapping notary seal on page 2 bbox [72.0, 410.0, 520.0, 455.0].`
 - **Ejecución en vivo medida:** Decisions sobre el recorte con el texto OCR devolvió `p = 0.35`, confianza calibrada 0.30, menor a 0.80; mismo resultado de enrutamiento. Sin texto OCR: `p = 0.40` (0.20). Solo texto OCR sin imagen: `p = 0.99` (0.98), lo que demuestra que el texto OCR por sí solo induciría una falsa certeza. Con una versión anterior del sello semitransparente (monto legible): `p = 0.72` con texto OCR y `p = 0.90` solo imagen.
+
+- **Relectura VLM en vivo medida:** `gpt-6-luna` sobre el recorte sellado devolvió `{"reading": "QUINTA.- El capital social es de $ MIL PESOS 00/100 M.N.).", "legible": false}`; sobre un recorte limpio del Acta A leyó el texto exacto con `legible = true`.
+- **`test-decisions --live` (2026-10-19):** predicado sobre texto limpio `p = 1.00` (CONFIRMED); recorte sellado del Acta B `p = 0.48`, `abs(2p - 1) = 0.04` (REVIEW); predicado del representante revocado del Acta C `p = 0.00` (REJECTED); riesgo de inyección normalizado 0.997 (FLAGGED, con coincidencias de regex `ignore_previous_instructions`, `force_approval` y `skip_human_review`).
+- **Ejecución completa en vivo con RapidOCR real:** legibilidad de la página 2 = 0.33; la primera extracción dejó capital y `poderes` como `no_encontrado` (RapidOCR omitió en silencio el monto bajo el sello con confianza alta); la relectura VLM de página completa devolvió `legible = false` con la transcripción visible; una reextracción obtuvo capital 250,000.00 con `monto_en_letra` `[ilegible] MIL PESOS 00/100 M.N.`; Decisions sobre el recorte grueso de página completa dio `p = 0.98` (frente a 0.48 con el recorte ajustado); el capital se envió a revisión por la discrepancia número frente a letra y por `legible = false`. Limitación: la fusión a página completa entrega al predicado un recorte grueso; la revisión provino de las verificaciones determinísticas, no del predicado.
 
 El resultado correcto no es omitir el valor ni aceptarlo: es extraerlo, explicar por qué no es verificable y entregarlo al revisor con el recorte.
 
 ### Acta C: constitución 2019 y asamblea 2024
 
-Cuatro páginas nativas. La extracción entrega el historial: constitución (2019-05-10, escritura 30,100, capital 100,000.00), aumento de capital (2024-08-20, escritura 58,400, capital 1,000,000.00), revocación de `SR. JUAN C. PEREZ LOPEZ` y otorgamiento de poderes a `ING. ALEJANDRO GÓMEZ RUIZ`.
+Cuatro páginas nativas; los puntajes por página solo evalúan riesgo de inyección y no marcan nada. La extracción entrega el historial: constitución (2019-05-10, escritura 30,100, capital 100,000.00), aumento de capital (2024-08-20, escritura 58,400, capital 1,000,000.00), revocación de `SR. JUAN C. PEREZ LOPEZ` y otorgamiento de poderes a `ING. ALEJANDRO GÓMEZ RUIZ`.
 
 - **Capital vigente:** el del acto notarial más reciente, 1,000,000.00, con `fecha_acto_vigente` 2024-08-20 y `escritura_origen` 58,400.
 - **Revocación:** ambos nombres se normalizan (mayúsculas, sin acentos, sin títulos `LIC.` y `SR.`): `JUAN CARLOS PEREZ LOPEZ` frente a `JUAN C PEREZ LOPEZ`. Regla de expansión de iniciales: la inicial `C` se acepta como `CARLOS` porque el primer nombre (`JUAN`) y los apellidos (`PEREZ LOPEZ`) coinciden. La similitud `max(token_sort_ratio, 0.95 x token_set_ratio)` da 89.41, mayor o igual a 85, y la guarda de apellidos y primer nombre se cumple. Se registra `[REVOKED]` con el puntaje.
@@ -95,19 +117,26 @@ Un casi homónimo (por ejemplo `JUAN CARLOS PEREZ LOZANO`, similitud cercana a 8
 
 ## 6. Modos de proveedor
 
-| Modo | Extracción y relectura VLM | Verificación Decisions | Uso |
-|------|---------------------------|------------------------|-----|
-| OpenAI Cloud en vivo | Responses API, `gpt-6-luna` | API Decisions, `gpt-6-luna` | Requiere `OPENAI_API_KEY`; solo en fallos de caché |
-| Base URL compatible con OpenAI | Servidor on-prem en OpenShift (vLLM o TGI con modelos como Qwen2.5-VL o Llama) mediante `OPENAI_BASE_URL` | Requiere OpenAI Cloud: la API Decisions no tiene equivalente on-prem hoy | Datos que no deben salir de la infraestructura propia; el nivel de verificación queda en la nube o se sustituye por revisión humana |
-| Sin conexión | Caché determinística preverificada por SHA-256 | Caché determinística | Demostración y pruebas reproducibles sin credenciales |
+**Modo 1 (por defecto): todo en OpenAI Cloud con `OPENAI_API_KEY`.** Extracción con `gpt-6-luna` (Responses API, esquema estricto), relectura VLM con `gpt-6-luna` y Decisions `/v1/decisions` con `gpt-6-luna` (predicado y score).
 
-El orquestador depende solo de las interfaces (`BaseLLMProvider`, `BaseOCRProvider`, `BaseVerifierProvider`, `BaseStorageRepository`), por lo que el modo se elige por configuración sin cambiar el pipeline. Compensación honesta: un modelo on-prem reduce la exposición de datos pero exige operar GPU, medir su calidad con la misma evaluación y aceptar que la verificación por predicado sigue dependiendo del servicio en la nube.
+**Modo 2 (alternativa si el banco no puede enviar documentos a OpenAI).** La extracción y la relectura VLM se apuntan a un servidor on-prem compatible con OpenAI (vLLM o TGI sobre GPU de Red Hat OpenShift con modelos multimodales abiertos como Qwen2.5-VL o Llama) mediante `OPENAI_BASE_URL`, sin cambios de código. Como `/v1/decisions` existe solo en OpenAI Cloud, hay dos variantes:
+
+- **2a:** enviar a Decisions únicamente el recorte pequeño de baja confianza (por ejemplo, la franja del capital).
+- **2b:** no usar Decisions; esos campos pasan directamente a revisión humana (verificador no disponible lleva a revisión, ya implementado).
+
+Solo la aceptación de la URL base está implementada; el resto del Modo 2 está documentado, no ejercitado.
+
+**Modo 3: caché determinística preverificada fuera de línea** (por defecto cuando no hay llave): `actas-cli demo`, pruebas y CI.
+
+No se usan modelos de razonamiento de la serie o (latencia y costo, y no hacen falta).
+
+El orquestador depende solo de las interfaces (`BaseLLMProvider`, `BaseOCRProvider`, `BaseVerifierProvider`, `BaseStorageRepository`), por lo que el modo se elige por configuración sin cambiar el pipeline. Compensación honesta: un modelo on-prem reduce la exposición de datos pero exige operar GPU, medir su calidad con la misma evaluación y aceptar que la verificación por predicado sigue dependiendo del servicio en la nube (2a) o se sustituye por revisión humana (2b).
 
 ## 7. Decisiones de arquitectura (Parte 1)
 
 **1. ¿Cómo distinguir un PDF nativo de uno escaneado y cómo cambia el pipeline?** Por página, no por documento: PyMuPDF extrae la capa de texto y se cuentan caracteres alfanuméricos limpios; con 50 o más la página es nativa (Nivel 0), con menos se renderiza a 200 dpi y pasa a OCR (Nivel 1). Un documento puede ser híbrido (Acta B). Una imagen PNG/JPG se trata como página escaneada. Solo cambia la fuente del texto, su confianza y la posible escalación; extracción, interpretación y validación son las mismas.
 
-**2. ¿Cuándo extracción nativa, OCR, modelo multimodal o LLM de texto?** Nativa siempre que haya capa de texto: exacta, gratuita y determinística. OCR local para páginas sin texto: barato y con confianza y bbox por región. Modelo multimodal solo sobre recortes de regiones con confianza OCR menor a 0.85 (relectura VLM con esquema `{reading, legible}`), nunca sobre el documento completo, para acotar costo y superficie de alucinación. LLM de texto para la extracción a esquema estricto sobre el texto ya corregido. La API Decisions como verificador independiente del valor final sobre el mismo recorte.
+**2. ¿Cuándo extracción nativa, OCR, modelo multimodal o LLM de texto?** Nativa siempre que haya capa de texto: exacta, gratuita y determinística. OCR local para páginas sin texto: barato y con confianza y bbox por región. Modelo multimodal solo sobre recortes de regiones con confianza OCR menor a 0.85, o de campos críticos en páginas con legibilidad normalizada menor a 0.75 según el puntaje `OCR_LEGIBILITY_SCORE` de Decisions (relectura VLM con esquema `{reading, legible}`); la imagen de página completa solo se usa para el puntaje de legibilidad y, de forma acotada, en la relectura tardía de un campo crítico requerido que quedó `no_encontrado`. Esto acota costo y superficie de alucinación y cubre las omisiones que la confianza del OCR no detecta. LLM de texto para la extracción a esquema estricto sobre el texto ya corregido. La API Decisions como verificador independiente del valor final sobre el mismo recorte.
 
 **3. ¿Qué información conservar para auditoría y reutilización?** El original direccionado por SHA-256; el texto por página con su fuente; las regiones OCR con bbox y confianza; las lecturas OCR y VLM; los recortes PNG de regiones escaladas; la extracción cruda previa a la resolución (se cachea para que la lógica determinística se re-ejecute siempre); el JSON final con `page_number`, `source_quote`, `confidence_source`, `bounding_box` y motivo de revisión por campo; `audit_metadata` (`schema_version`, `model_version`); `prompt_sha256` en la entrada de caché; y la bitácora JSONL con PII enmascarada.
 
@@ -117,11 +146,11 @@ El orquestador depende solo de las interfaces (`BaseLLMProvider`, `BaseOCRProvid
 
 **6. ¿Agente, workflow determinístico o combinación?** Workflow determinístico con pasos de IA acotados. El proceso es regulado y la estructura del documento es conocida; un agente autónomo añadiría variabilidad entre ejecuciones y una superficie de inyección difícil de auditar, sin beneficio. Los modelos se usan como funciones con entrada y salida tipadas dentro de un flujo fijo.
 
-**7. ¿Qué condiciones envían un caso a revisión humana?** Confianza calibrada de Decisions menor a 0.80; región declarada ilegible por la relectura VLM; discrepancia entre OCR y VLM sin confirmación alta de Decisions; falla de grounding (confianza topada en 0.40); valor ausente en su propia cita; monto en número distinto del monto en letra; incoherencia temporal (evento anterior a la constitución, revocación anterior al nombramiento); revocación ambigua (similitud entre 75 y 85, o apellidos distintos); campo requerido ausente; verificador no disponible o con rechazo; y riesgo de inyección o legibilidad fuera de umbral según las preguntas `score`.
+**7. ¿Qué condiciones envían un caso a revisión humana?** Confianza calibrada de Decisions menor a 0.80; región declarada ilegible por la relectura VLM; discrepancia entre OCR y VLM sin confirmación alta de Decisions; falla de grounding (confianza topada en 0.40); valor ausente en su propia cita; monto en número distinto del monto en letra; incoherencia temporal (evento anterior a la constitución, revocación anterior al nombramiento); revocación ambigua (similitud entre 75 y 85, o apellidos distintos); campo requerido ausente; verificador no disponible o con rechazo; y legibilidad normalizada de la página menor a 0.75 sin que la relectura y el predicado confirmen el valor; relectura VLM con `legible = false` o fallida; campo crítico requerido que sigue `no_encontrado` tras la relectura tardía acotada y una única reextracción; y riesgo de inyección (prefiltro de regex o riesgo normalizado mayor o igual a 0.5), que fuerza revisión global e impide la aprobación automática de los campos de esa página.
 
 ## 8. Diseño transversal
 
-**Imágenes.** Un PNG o JPG se envuelve como documento de una página escaneada. El SHA-256 se calcula sobre los bytes originales de la imagen, no sobre el PDF derivado, para que la idempotencia no dependa de la conversión.
+**Imágenes.** Un PNG o JPG, o un conjunto ordenado de ellos que forma un documento, se envuelve (`src/ingestion/image_loader.py`) en un PDF con una página por imagen (tamaño en píxeles a 200 dpi, orientación EXIF aplicada) y sigue la ruta de página escaneada; la imagen N es la página N. El SHA-256 se calcula sobre los bytes originales de la imagen (para varias, una concatenación con prefijo de longitud en el orden dado), no sobre el PDF derivado, para que la idempotencia no dependa de la conversión. Se procesan con `actas-cli process-file`.
 
 **Reutilización por varios consumidores.** Se extrae una sola vez por documento y se cachea por SHA-256. Alta de cuentas, validación de representantes legales, firma y revisión de contratos y actualización de expediente leen el mismo JSON versionado; cada consumidor aplica su política sobre `status`, evidencia y `requires_human_review` (por ejemplo, firma de contratos puede exigir que `representantes_legales` y `poderes` no tengan revisión pendiente, mientras que actualización de expediente puede aceptar campos en revisión marcados como tales).
 
@@ -139,7 +168,7 @@ El orquestador depende solo de las interfaces (`BaseLLMProvider`, `BaseOCRProvid
 
 Implementación en `src/`, ejecutable con `uv run actas-cli demo` (generación de los tres documentos, procesamiento y evaluación). El esquema esperado se extiende con evidencia por campo, estado, historial de actos y metadatos de auditoría; cada extensión y cambio de nombre se justifica en [SCHEMA.md](SCHEMA.md). El ground truth legible está en [GROUND_TRUTH.md](GROUND_TRUTH.md) y las salidas en [results/](../results/).
 
-El comando `actas-cli test-decisions [--live]` ejecuta cuatro casos de verificación con la API Decisions (predicado sobre texto limpio, predicado sobre el recorte sellado del Acta B con `abs(2p - 1)`, predicado de contradicción sobre el representante revocado del Acta C y score de riesgo de inyección) y escribe `outputs/decisions_verification_report.json`.
+El comando `actas-cli test-decisions [--live]` ejecuta cuatro casos de verificación con la API Decisions (predicado sobre texto limpio, predicado sobre el recorte sellado del Acta B con `abs(2p - 1)`, predicado de contradicción sobre el representante revocado del Acta C y score de riesgo de inyección) y escribe `outputs/decisions_verification_report.json`. Con `--no-live` las respuestas son simuladas y el reporte lo declara; con `--live` provienen de la API real. Los reportes de ambos modos están en [results/](../results/). `actas-cli process-file` procesa un PDF o un conjunto de imágenes como un solo documento.
 
 ## 10. Parte 3: evaluación
 
@@ -149,6 +178,19 @@ Métricas por tipo de campo con pesos (montos y representantes 0.20; el resto 0.
 
 Revisión priorizada del fragmento `process_document`, con cada corrección vinculada al módulo del repositorio que la implementa, y respuestas sobre inyección de instrucciones, escala a 2 millones de documentos al mes, impacto de 80% de PDF nativos y clasificación de 50,000 documentos históricos: [CODE_REVIEW.md](CODE_REVIEW.md).
 
-## 12. Evidencia medida y diseño
+## 12. Evidencia medida
 
-Las cifras de este documento provienen de ejecuciones reales: la ejecución determinística (`actas-cli demo`) y las mediciones en vivo del 2026-10-18 (extracción de Actas A y B; verificación Decisions del Acta B). La relectura VLM, las preguntas `score`, los recortes en `outputs/crops/`, el comando `test-decisions` y el modo con `OPENAI_BASE_URL` forman parte del diseño descrito; este documento no reporta métricas de esas etapas.
+Las cifras provienen de ejecuciones reales, y cada una indica si fue en vivo o simulada. Con tres documentos sintéticos no son una estimación estadística.
+
+| Fecha | Modo | Medición | Resultado |
+|-------|------|----------|-----------|
+| (determinística) | Simulada | `actas-cli demo` | Calificación 1.000 en los tres documentos, Evidence Hit Rate 100%, enrutamiento a revisión correcto; Acta B `p = 0.78` (calibrada 0.56) |
+| (determinística) | Simulada | `test-decisions --no-live` | Texto limpio `p = 0.98`; recorte sellado `p = 0.78` (REVIEW); revocación `p = 0.03` (REJECTED); riesgo de inyección normalizado 0.9367 (FLAGGED); marcada `simulated: true` |
+| 2026-10-18 | En vivo | Extracción Acta A / Acta B | Calificación 1.000 en ambas; 0 fallas de grounding en 20 y 15 evidencias; 5,087 / 4,656 tokens de entrada y 5,101 / 3,323 de salida |
+| 2026-10-18 | En vivo | Decisions sobre el recorte del Acta B | Con texto OCR `p = 0.35` (calibrada 0.30); sin texto OCR `p = 0.40` (0.20); solo texto OCR `p = 0.99` (0.98); luego `p = 0.30` con la versión 1 de instrucciones del verificador; sello semitransparente `p = 0.72` a 0.90 |
+| 2026-10-19 | En vivo | `test-decisions --live` | Texto limpio `p = 1.00` (CONFIRMED); recorte sellado `p = 0.48`, `abs(2p - 1) = 0.04` (REVIEW); revocación `p = 0.00` (REJECTED); inyección 0.997 (FLAGGED); 1,891 tokens de entrada, unos USD 0.0002 |
+| Sesión en vivo, oct. 2026 | En vivo | Relectura VLM `gpt-6-luna` | Recorte sellado: `legible = false`, `"QUINTA.- El capital social es de $ MIL PESOS 00/100 M.N.)."`; recorte limpio del Acta A: lectura exacta, `legible = true` |
+| Sesión en vivo, oct. 2026 | En vivo, RapidOCR real | Acta B completa | Legibilidad 0.33 (Acta A p1: 0.997); capital y `poderes` `no_encontrado` en la primera extracción; relectura de página completa `legible = false`; una reextracción con capital 250,000.00 y `monto_en_letra` `[ilegible] MIL PESOS 00/100 M.N.`; Decisions `p = 0.98` sobre el recorte grueso; capital a revisión por discrepancia número frente a letra y `legible = false` |
+| (costo) | En vivo | Solicitud de legibilidad e inyección de página completa | Unos 4.5 mil tokens de entrada, unos USD 0.00045 |
+
+Pendiente de medir: calibración de umbrales con datos etiquetados reales, evaluación más amplia de RapidOCR y de la relectura VLM sobre escaneos reales, recortes por región para la relectura tardía de página completa, y el Modo 2 (solo la aceptación de la URL base está implementada). La API Decisions solo existe en OpenAI Cloud y RapidOCR se ejercitó en vivo una vez.

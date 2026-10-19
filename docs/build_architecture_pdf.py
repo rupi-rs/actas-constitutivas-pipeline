@@ -267,7 +267,7 @@ def draw_diagram_page(c: Canvas) -> None:
     c.drawString(
         30,
         height - 54,
-        "Workflow determinístico con pasos de IA acotados. Las páginas nativas omiten OCR, relectura VLM y Decisions.",
+        "Workflow determinístico con pasos de IA acotados. Las páginas nativas omiten OCR y relectura VLM; todas reciben puntajes Decisions.",
     )
     draw_legend(c, 30, height - 72)
 
@@ -276,20 +276,25 @@ def draw_diagram_page(c: Canvas) -> None:
     cache = node(0, 2, "Caché por SHA-256", "Fallo: va al inspector. Acierto: omite OCR, VLM y LLM", FILL_STORE)
     inspector = node(1, 2, "Inspector por página", "PyMuPDF: >= 50 caracteres limpios es nativa; < 50 o imagen va a OCR", FILL_RULE)
     nativo = node(2, 1, "Nivel 0: texto nativo", "Capa de texto del PDF; confianza 1.0; costo 0", FILL_RULE)
-    ocr = node(2, 2, "Nivel 1: OCR con bbox", "Render 200 dpi; confianza y bbox por región; >= 0.85 pasa directo", FILL_RULE)
-    vlm = node(2, 3, "Nivel 2: relectura VLM", "Recorte físico por bbox; gpt-6-luna visión; esquema {reading, legible}", FILL_AI)
+    ocr = node(2, 2, "Nivel 1: OCR con bbox", "Render 200 dpi; confianza y bbox por región; puede omitir texto con confianza alta", FILL_RULE)
+    puntajes = Box(
+        COLUMNS[2], ROWS[3], "Puntajes Decisions por página",
+        "(legibilidad + inyección). Legibilidad < 0.75 escala campos críticos; inyección >= 0.5 fuerza revisión",
+        FILL_AI, h=64.0,
+    )
+    vlm = node(3, 3, "Relectura VLM", "Recorte por bbox si OCR < 0.85 o legibilidad < 0.75; gpt-6-luna {reading, legible}", FILL_AI)
     texto = node(3, 2, "Texto por página", "Corregido con la lectura VLM; se conservan ambas lecturas", FILL_RULE)
     extraccion = node(3, 0, "Extracción LLM", "Responses API, JSON schema estricto; páginas en XML <page>", FILL_AI)
     resolver = node(4, 0, "Interpretación", "Resolución temporal; revocaciones con RapidFuzz >= 85 y guarda de apellidos", FILL_RULE)
     validacion = node(4, 1, "Validación determinística", "Grounding de cita, valor en cita, fechas, monto en letra, spec del tipo", FILL_RULE)
-    decisions = node(4, 2, "Nivel 2: Decisions API", "predicate sobre el recorte: |2p-1| frente a 0.80; score de legibilidad e inyección", FILL_AI)
+    decisions = node(4, 2, "Nivel 2: Decisions API", "predicate sobre el mismo recorte: |2p-1| frente a 0.80", FILL_AI)
     ruteo = node(5, 2, "Enrutamiento", "Umbrales por campo; motivo de revisión explícito", FILL_RULE)
     revision = node(5, 3, "Revisión humana", "Recorte PNG, cita, página, ambas lecturas y motivo; la decisión vuelve al JSON", FILL_HUMAN)
     salida = node(5, 1, "JSON versionado", "Evidencia por campo; audit_metadata con schema_version y model_version", FILL_STORE)
     consumidores = node(5, 0, "Consumidores", "Alta de cuentas, representantes, contratos, expediente", FILL_STORE)
 
     for box in (
-        entrada, ingesta, cache, inspector, nativo, ocr, vlm, texto, extraccion,
+        entrada, ingesta, cache, inspector, nativo, ocr, puntajes, vlm, texto, extraccion,
         resolver, validacion, decisions, ruteo, revision, salida, consumidores,
     ):
         draw_box(c, box)
@@ -303,10 +308,11 @@ def draw_diagram_page(c: Canvas) -> None:
     label(c, inspector.cx, inspector.top + 3, "nativa >= 50", align="center")
     polyline_arrow(c, [(inspector.right, inspector.cy - 8), (ocr.x, inspector.cy - 8)])
 
-    polyline_arrow(c, [(ocr.cx, ocr.y), (vlm.cx, vlm.top)])
-    label(c, ocr.cx + 3, ocr.y - 10, "regiones < 0.85")
+    polyline_arrow(c, [(ocr.cx, ocr.y), (puntajes.cx, puntajes.top)])
+    label(c, ocr.cx + 3, ocr.y - 10, "páginas escaneadas")
+    polyline_arrow(c, [(puntajes.right, puntajes.cy), (vlm.x, puntajes.cy)])
     polyline_arrow(c, [(ocr.right, ocr.cy), (texto.x, texto.cy)])
-    polyline_arrow(c, [(vlm.right, vlm.cy), (texto.cx, vlm.cy), (texto.cx, texto.y)])
+    polyline_arrow(c, [(vlm.cx, vlm.top), (vlm.cx, texto.y)])
     polyline_arrow(c, [(nativo.right, nativo.cy), (texto.cx, nativo.cy), (texto.cx, texto.top)])
     polyline_arrow(c, [(texto.cx + 30, texto.top), (texto.cx + 30, extraccion.y)])
     label(c, texto.cx + 27, (texto.top + extraccion.y) / 2.0 + 20, "páginas XML", align="right")
@@ -314,6 +320,8 @@ def draw_diagram_page(c: Canvas) -> None:
     polyline_arrow(c, [(extraccion.right, extraccion.cy), (resolver.x, extraccion.cy)])
     polyline_arrow(c, [(resolver.cx, resolver.y), (validacion.cx, validacion.top)])
     polyline_arrow(c, [(validacion.cx, validacion.y), (decisions.cx, decisions.top)])
+    label(c, validacion.cx + 5, validacion.y - 11, "falla en escaneada:")
+    label(c, validacion.cx + 5, validacion.y - 19, "relectura tardía, 1 reextracción")
     polyline_arrow(c, [(decisions.right, decisions.cy), (ruteo.x, decisions.cy)])
     polyline_arrow(c, [(ruteo.cx, ruteo.top), (salida.cx, salida.y)])
     label(c, ruteo.cx + 3, ruteo.top + 9, "sin dudas")
@@ -371,16 +379,17 @@ DECISIONS: tuple[tuple[str, str], ...] = (
         "1. PDF nativo frente a escaneado.",
         "Se decide por página: PyMuPDF extrae la capa de texto y se cuentan caracteres alfanuméricos limpios. "
         "Con 50 o más la página es nativa (confianza 1.0); con menos se renderiza a 200 dpi y entra a OCR. "
-        "Un documento puede ser híbrido. Una imagen PNG/JPG se trata como página escaneada. Solo cambia la fuente "
-        "del texto y su confianza; extracción, resolución y validación son las mismas.",
+        "Un documento puede ser híbrido. Una imagen PNG/JPG (o un conjunto ordenado) se envuelve como páginas escaneadas. "
+        "Solo cambia la fuente del texto y su confianza; extracción, resolución y validación son las mismas.",
     ),
     (
         "2. Nativo, OCR, multimodal o LLM de texto.",
         "Nativo siempre que haya capa de texto: exacto, gratuito y determinístico. OCR local con bbox (Nivel 1) para páginas "
-        "sin texto, con confianza y bbox por región. Modelo multimodal solo sobre recortes con confianza OCR menor "
-        "a 0.85 (relectura VLM con esquema {reading, legible}), nunca sobre el documento completo. LLM de texto para "
-        "la extracción a esquema estricto sobre el texto corregido. Decisions (predicate) verifica el valor final "
-        "sobre el mismo recorte y devuelve una probabilidad p que se mapea a |2p - 1|.",
+        "sin texto, con confianza y bbox por región; su confianza no detecta omisiones, por lo que cada página recibe un "
+        "puntaje de legibilidad de Decisions. Modelo multimodal solo sobre recortes con confianza OCR menor a 0.85 o "
+        "campos críticos en páginas con legibilidad menor a 0.75 (relectura VLM con esquema {reading, legible}). "
+        "LLM de texto para la extracción a esquema estricto sobre el texto corregido. Decisions (predicate) verifica "
+        "el valor final sobre el mismo recorte y devuelve p, que se mapea a |2p - 1|.",
     ),
     (
         "3. Qué se conserva.",
@@ -411,19 +420,21 @@ DECISIONS: tuple[tuple[str, str], ...] = (
     ),
     (
         "7. Revisión humana.",
-        "Decisions calibrado menor a 0.80; VLM declara la región ilegible; OCR y VLM discrepan sin confirmación alta "
-        "de Decisions; falla el grounding (confianza topada en 0.40); el valor no está en su cita; incoherencia "
-        "temporal; revocación ambigua (similitud 75 a 85 o apellidos distintos); campo requerido ausente; verificador "
-        "no disponible o con rechazo; legibilidad o riesgo de inyección fuera de umbral (preguntas score). El revisor ve "
-        "el recorte guardado en outputs/crops/{acta_id}_p{page}_{field}_bbox.png, la cita, ambas lecturas y el motivo.",
+        "Decisions calibrado menor a 0.80; VLM declara la región ilegible (legible = false) o falla; OCR y VLM discrepan "
+        "sin confirmación alta; falla el grounding (confianza topada en 0.40); el valor no está en su cita; número "
+        "distinto de letra; incoherencia temporal; revocación ambigua; campo requerido que sigue ausente tras la "
+        "relectura tardía y una reextracción; verificador no disponible; legibilidad de página menor a 0.75 sin "
+        "confirmación; riesgo de inyección mayor o igual a 0.5 (o coincidencia de regex), que fuerza revisión global. "
+        "El revisor ve el recorte guardado en outputs/crops/{acta_id}_p{page}_{field}_bbox.png, la cita, ambas lecturas y el motivo.",
     ),
     (
         "Por qué la API Decisions.",
         "POST /v1/decisions devuelve por pregunta una probability (predicate) o un score con confidence (score, choice); "
         "es la primitiva diseñada para esta tarea y solo factura entrada (USD 0.10 por millón). Una confianza "
         "verbalizada por un modelo generativo no se usa para decidir, y no se usan modelos de razonamiento extendido. "
-        "Extracción y VLM pueden ir a un servidor on-prem compatible con OpenAI (OPENAI_BASE_URL); Decisions requiere "
-        "OpenAI Cloud; sin conexión se usa la caché determinística.",
+        "Modo 1 (por defecto): todo en OpenAI Cloud. Modo 2: extracción y VLM en un servidor on-prem compatible con "
+        "OpenAI (OPENAI_BASE_URL); Decisions solo en OpenAI Cloud, con la variante 2a (solo el recorte pequeño) o "
+        "2b (sin Decisions, revisión humana). Modo 3: caché determinística sin conexión.",
     ),
     (
         "Reutilización y evolución.",
@@ -466,7 +477,7 @@ def draw_decisions_page(c: Canvas) -> None:
     title = ParagraphStyle("title", fontName="Helvetica-Bold", fontSize=13, leading=16, textColor=INK, spaceAfter=4)
     intro = ParagraphStyle("intro", fontName="Helvetica", fontSize=8.5, leading=11, textColor=MUTED, spaceAfter=6)
     body = ParagraphStyle(
-        "body", fontName="Helvetica", fontSize=9.6, leading=12.8, textColor=INK, alignment=TA_JUSTIFY, spaceAfter=7
+        "body", fontName="Helvetica", fontSize=9.2, leading=12.0, textColor=INK, alignment=TA_JUSTIFY, spaceAfter=5
     )
     story = [
         Paragraph("Decisiones de arquitectura", title),
