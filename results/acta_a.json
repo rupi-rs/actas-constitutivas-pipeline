@@ -366,7 +366,7 @@
     }
   ],
   "audit_metadata": {
-    "job_id": "cad480684c22",
+    "job_id": "437df38b9d82",
     "doc_sha256": "822992832a9a659892b2e47ef53f0b8a01e64af1597355bfe86b8aa28f69c697",
     "document_filename": "acta_a.pdf",
     "schema_version": "1.0.0",
@@ -375,7 +375,7 @@
     "native_pages_count": 2,
     "ocr_pages_count": 0,
     "global_human_review_required": false,
-    "processing_time_ms": 6.1,
+    "processing_time_ms": 5.942,
     "security_flags": []
   }
 }

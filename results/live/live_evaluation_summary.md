@@ -1,6 +1,6 @@
 # Evaluacion en vivo del pipeline
 
-Generado: 2026-10-19T04:49:02Z. Corridas: 3 (solicitadas: 3). Documentos evaluados: 9 (fallidos: 0).
+Generado: 2026-10-19T05:22:34Z. Corridas: 1 (solicitadas: 1). Documentos evaluados: 3 (fallidos: 0).
 
 Cada corrida copia `data/samples` y la verdad de referencia a un directorio temporal con cache vacio y procesa todo en vivo: RapidOCR local, extraccion y relectura VLM con la Responses API y verificacion con el predicate de la Decisions API.
 
@@ -20,11 +20,11 @@ Cada corrida copia `data/samples` y la verdad de referencia a un directorio temp
 
 | Acta | Corridas OK | Media | Min | Max | Desv. estandar | Falsos positivos criticos |
 |---|---|---|---|---|---|---|
-| acta_a | 3/3 | 1.000 | 1.000 | 1.000 | 0.000 | 0 |
-| acta_b | 3/3 | 1.000 | 1.000 | 1.000 | 0.000 | 0 |
-| acta_c | 3/3 | 1.000 | 1.000 | 1.000 | 0.000 | 0 |
+| acta_a | 1/1 | 1.000 | 1.000 | 1.000 | 0.000 | 0 |
+| acta_b | 1/1 | 0.800 | 0.800 | 0.800 | 0.000 | 0 |
+| acta_c | 1/1 | 1.000 | 1.000 | 1.000 | 0.000 | 0 |
 
-Global por documento: media 1.000, min 1.000, max 1.000, desv. estandar 0.000. Puntaje global por corrida: media 1.000, min 1.000, max 1.000. Falsos positivos criticos totales: 0. Tasa de acierto de evidencia media: 1.000.
+Global por documento: media 0.933, min 0.800, max 1.000, desv. estandar 0.116. Puntaje global por corrida: media 0.933, min 0.933, max 0.933. Falsos positivos criticos totales: 0. Tasa de acierto de evidencia media: 1.000.
 
 ## Puntaje por campo
 
@@ -47,7 +47,7 @@ Global por documento: media 1.000, min 1.000, max 1.000, desv. estandar 0.000. P
 |---|---|---|---|---|
 | fecha_constitucion | 1.000 | 1.000 | 1.000 | 1.000 |
 | numero_escritura | 1.000 | 1.000 | 1.000 | 1.000 |
-| capital_social_actual | 1.000 | 1.000 | 1.000 | 1.000 |
+| capital_social_actual | 0.000 | 0.000 | 0.000 | 0.000 |
 | razon_social | 1.000 | 1.000 | 1.000 | 1.000 |
 | notario | 1.000 | 1.000 | 1.000 | 1.000 |
 | socios | 1.000 | 1.000 | 1.000 | 1.000 |
@@ -73,38 +73,38 @@ Sobre-revision: campo marcado que no se esperaba. Sub-revision: campo esperado q
 
 | Acta | Esperados | VP | Sobre-revision | Sub-revision | Precision | Recall | Coincidencia exacta | Campos sobre-revisados | Campos sub-revisados |
 |---|---|---|---|---|---|---|---|---|---|
-| acta_a | ninguno | 0 | 0 | 0 | n/d | n/d | 3/3 | - | - |
-| acta_b | capital_social_actual | 3 | 3 | 0 | 0.500 | 1.000 | 0/3 | socios (3) | - |
-| acta_c | ninguno | 0 | 0 | 0 | n/d | n/d | 3/3 | - | - |
-| total | - | 3 | 3 | 0 | 0.500 | 1.000 | 6/9 | socios (3) | - |
+| acta_a | ninguno | 0 | 0 | 0 | n/d | n/d | 1/1 | - | - |
+| acta_b | capital_social_actual | 1 | 0 | 0 | 1.000 | 1.000 | 1/1 | - | - |
+| acta_c | ninguno | 0 | 0 | 0 | n/d | n/d | 1/1 | - | - |
+| total | - | 1 | 0 | 0 | 1.000 | 1.000 | 3/3 | - | - |
 
 ## Latencia por documento (ms)
 
 | Acta | Media | p50 | Max |
 |---|---|---|---|
-| acta_a | 40980.2 | 36582.9 | 50032.0 |
-| acta_b | 101309.7 | 101246.8 | 101977.4 |
-| acta_c | 53357.0 | 54784.8 | 58591.5 |
-| global | 65215.6 | 54784.8 | 101977.4 |
+| acta_a | 35310.6 | 35310.6 | 35310.6 |
+| acta_b | 85979.6 | 85979.6 | 85979.6 |
+| acta_c | 48691.7 | 48691.7 | 48691.7 |
+| global | 56660.6 | 48691.7 | 85979.6 |
 
 ## Tokens por etapa (media por documento)
 
 | Acta | Etapa | Llamadas | Tokens de entrada | Tokens de salida |
 |---|---|---|---|---|
-| acta_a | extraction | 1.00 | 5373.0 | 4856.0 |
+| acta_a | extraction | 1.00 | 5373.0 | 4167.0 |
 | acta_a | vlm_reread | 0.00 | 0.0 | 0.0 |
 | acta_a | decisions_predicate | 0.00 | 0.0 | 0.0 |
-| acta_b | extraction | 2.00 | 9843.0 | 6970.0 |
-| acta_b | vlm_reread | 3.00 | 6847.0 | 3111.3 |
-| acta_b | decisions_predicate | 4.33 | 5680.3 | 0.0 |
-| acta_c | extraction | 1.00 | 5780.0 | 6354.3 |
+| acta_b | extraction | 2.00 | 9830.0 | 6367.0 |
+| acta_b | vlm_reread | 2.00 | 5862.0 | 1966.0 |
+| acta_b | decisions_predicate | 8.00 | 7268.0 | 0.0 |
+| acta_c | extraction | 1.00 | 5780.0 | 5582.0 |
 | acta_c | vlm_reread | 0.00 | 0.0 | 0.0 |
 | acta_c | decisions_predicate | 0.00 | 0.0 | 0.0 |
 
 ## Costo
 
-- Decisions API: 17041 tokens de entrada en total; a USD 0.10 por millon, costo USD 0.001704.
-- Responses API (gpt-6-luna, extraccion y relectura VLM): 83529 tokens de entrada y 63875 de salida en total; no se asume precio.
+- Decisions API: 7268 tokens de entrada en total; a USD 0.10 por millon, costo USD 0.000727.
+- Responses API (gpt-6-luna, extraccion y relectura VLM): 26845 tokens de entrada y 18082 de salida en total; no se asume precio.
 
 ## Errores
 
