@@ -31,6 +31,16 @@ ACTA_CONSTITUTIVA_FIELDS: tuple[str, ...] = (
 )
 """The 8 required serialized fields of an Acta Constitutiva, in contract order."""
 
+ACTA_CONSTITUTIVA_CRITICAL_FIELDS: tuple[str, ...] = (
+    "fecha_constitucion",
+    "numero_escritura",
+    "notario",
+    "representantes_legales",
+    "poderes",
+    "capital_social_actual",
+)
+"""Fields whose misreading on a scanned page carries legal or financial risk."""
+
 
 @dataclass(frozen=True)
 class DocumentTypeSpec:
@@ -56,12 +66,18 @@ class DocumentTypeSpec:
         ``None`` lets the LLM provider use its default prompt.
     description : str, default ""
         Free-text description.
+    critical_fields : tuple of str, optional
+        Applicable fields escalated to the VLM re-read and Decisions
+        predicate when their scanned page has low legibility, and whose
+        absence on a scanned document triggers one re-read and
+        re-extraction.
 
     Raises
     ------
     ValueError
         If ``document_type`` is empty, ``required_fields`` is empty or
-        contains duplicates, or a required field is not applicable.
+        contains duplicates, or a required or critical field is not
+        applicable.
     """
 
     document_type: str
@@ -71,6 +87,7 @@ class DocumentTypeSpec:
     temporal_resolution: bool = True
     prompt_builder: Optional[PromptBuilder] = None
     description: str = ""
+    critical_fields: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         """Validate the spec and default ``applicable_fields``.
@@ -91,6 +108,24 @@ class DocumentTypeSpec:
         missing = set(self.required_fields) - set(self.applicable_fields)
         if missing:
             raise ValueError(f"required fields not applicable: {sorted(missing)}")
+        not_applicable = set(self.critical_fields) - set(self.applicable_fields)
+        if not_applicable:
+            raise ValueError(f"critical fields not applicable: {sorted(not_applicable)}")
+
+    def is_critical(self, field_name: str) -> bool:
+        """Return whether a field is critical for this document type.
+
+        Parameters
+        ----------
+        field_name : str
+            Serialized field name.
+
+        Returns
+        -------
+        bool
+            ``True`` if the field is in ``critical_fields``.
+        """
+        return field_name in self.critical_fields
 
     def is_required(self, field_name: str) -> bool:
         """Return whether a field is required for this document type.
@@ -309,4 +344,5 @@ def build_acta_constitutiva_spec(prompt_builder: Optional[PromptBuilder] = None)
         temporal_resolution=True,
         prompt_builder=prompt_builder,
         description="Mexican incorporation deed and subsequent protocolized amendments.",
+        critical_fields=ACTA_CONSTITUTIVA_CRITICAL_FIELDS,
     )

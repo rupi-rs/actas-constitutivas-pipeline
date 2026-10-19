@@ -63,6 +63,10 @@ class VerifierError(PipelineError):
     """Raised when the predicate verifier (Escalation Tier 2) fails."""
 
 
+class DecisionScoreError(PipelineError):
+    """Raised when a Decisions ``score`` request (page legibility or prompt-injection risk) fails."""
+
+
 class VisionReadError(PipelineError):
     """Raised when the VLM re-read of a low-confidence region fails or is refused."""
 

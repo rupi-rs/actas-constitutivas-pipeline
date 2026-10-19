@@ -24,6 +24,12 @@ Recognised environment variables:
 - ``OPENAI_BASE_URL``: optional OpenAI-compatible endpoint for extraction and the
   VLM re-read (and the Decisions verifier when set; ``/v1/decisions`` is only
   served by OpenAI Cloud today). Unset keeps the SDK default.
+- ``PAGE_LEGIBILITY_THRESHOLD``: normalized Decisions ``OCR_LEGIBILITY_SCORE``
+  below which the critical fields of a scanned page are escalated even when
+  their OCR confidence is high (default ``0.75``).
+- ``PROMPT_INJECTION_RISK_THRESHOLD``: normalized Decisions
+  ``PROMPT_INJECTION_RISK_SCORE`` at or above which a page is flagged as a
+  suspected prompt injection (default ``0.5``).
 """
 
 from __future__ import annotations
@@ -92,6 +98,13 @@ class Settings:
         Minimum rapidfuzz similarity (0-100) for person entity matching.
     grounding_partial_ratio_threshold : float
         Minimum rapidfuzz partial ratio (0-100) for the grounding check.
+    legibility_threshold : float
+        Normalized page legibility score (``score / (levels - 1)``) below
+        which the critical fields of a scanned page become escalation
+        candidates regardless of their OCR confidence.
+    injection_risk_threshold : float
+        Normalized prompt-injection risk score at or above which a page is
+        flagged and the document is routed to human review.
 
     Notes
     -----
@@ -113,6 +126,8 @@ class Settings:
     review_confidence_threshold: float = 0.80
     fuzzy_match_threshold: float = 85.0
     grounding_partial_ratio_threshold: float = 90.0
+    legibility_threshold: float = 0.75
+    injection_risk_threshold: float = 0.5
 
     @property
     def openai_model(self) -> str:
@@ -207,6 +222,34 @@ def _parse_optional_float(name: str) -> Optional[float]:
     return value
 
 
+def _parse_unit_threshold(name: str, default: float) -> float:
+    """Read an optional threshold in ``[0.0, 1.0]`` from the environment.
+
+    Parameters
+    ----------
+    name : str
+        Environment variable name.
+    default : float
+        Value used when the variable is unset or empty.
+
+    Returns
+    -------
+    float
+        Parsed threshold.
+
+    Raises
+    ------
+    ValueError
+        If the value is not a finite number within ``[0.0, 1.0]``.
+    """
+    value = _parse_optional_float(name)
+    if value is None:
+        return default
+    if value < 0.0 or value > 1.0:
+        raise ValueError(f"{name} must be within [0.0, 1.0], got {value}")
+    return value
+
+
 def load_settings_from_env() -> Settings:
     """Build a fresh :class:`Settings` instance from environment variables.
 
@@ -218,7 +261,8 @@ def load_settings_from_env() -> Settings:
     Raises
     ------
     ValueError
-        If ``OPENAI_EXTRACTION_TEMPERATURE`` is set to a non-numeric value.
+        If ``OPENAI_EXTRACTION_TEMPERATURE`` is set to a non-numeric value,
+        or a Decisions score threshold is outside ``[0.0, 1.0]``.
 
     Notes
     -----
@@ -243,6 +287,8 @@ def load_settings_from_env() -> Settings:
         openai_base_url=base_url or None,
         openai_extraction_temperature=_parse_optional_float("OPENAI_EXTRACTION_TEMPERATURE"),
         audit_log_override=Path(audit_env) if audit_env else None,
+        legibility_threshold=_parse_unit_threshold("PAGE_LEGIBILITY_THRESHOLD", 0.75),
+        injection_risk_threshold=_parse_unit_threshold("PROMPT_INJECTION_RISK_THRESHOLD", 0.5),
     )
 
 
