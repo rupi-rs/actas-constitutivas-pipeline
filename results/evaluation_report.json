@@ -1,0 +1,271 @@
+{
+  "documents": [
+    {
+      "acta_id": "acta_a",
+      "field_scores": [
+        {
+          "field": "fecha_constitucion",
+          "metric": "iso_exact",
+          "score": 1.0,
+          "weight": 0.1,
+          "weighted": 0.1,
+          "passed": true,
+          "detail": "pred=2021-03-15 gt=2021-03-15"
+        },
+        {
+          "field": "numero_escritura",
+          "metric": "digits_exact",
+          "score": 1.0,
+          "weight": 0.1,
+          "weighted": 0.1,
+          "passed": true,
+          "detail": "pred=45120 gt=45120"
+        },
+        {
+          "field": "capital_social_actual",
+          "metric": "numeric_tolerance",
+          "score": 1.0,
+          "weight": 0.2,
+          "weighted": 0.2,
+          "passed": true,
+          "detail": "pred=500000.00 gt=500000.00"
+        },
+        {
+          "field": "razon_social",
+          "metric": "token_sort_ratio",
+          "score": 1.0,
+          "weight": 0.1,
+          "weighted": 0.1,
+          "passed": true,
+          "detail": "similarity=1.0000 threshold=0.90"
+        },
+        {
+          "field": "notario",
+          "metric": "notary_combined",
+          "score": 1.0,
+          "weight": 0.1,
+          "weighted": 0.1,
+          "passed": true,
+          "detail": "number_match=True name_similarity=1.0000"
+        },
+        {
+          "field": "socios",
+          "metric": "set_f1_pct",
+          "score": 1.0,
+          "weight": 0.1,
+          "weighted": 0.1,
+          "passed": true,
+          "detail": "P=1.0000 R=1.0000 F1=1.0000 pct_accuracy=1.0000"
+        },
+        {
+          "field": "representantes_legales",
+          "metric": "set_prf",
+          "score": 1.0,
+          "weight": 0.2,
+          "weighted": 0.2,
+          "passed": true,
+          "detail": "P=1.0000 R=1.0000 F1=1.0000 pred=2 gt=2"
+        },
+        {
+          "field": "poderes",
+          "metric": "set_f1_pairs",
+          "score": 1.0,
+          "weight": 0.1,
+          "weighted": 0.1,
+          "passed": true,
+          "detail": "P=1.0000 R=1.0000 F1=1.0000 pred=5 gt=5"
+        }
+      ],
+      "weighted_score": 1.0,
+      "penalty": 0.0,
+      "final_score": 1.0,
+      "evidence_hit_rate": 1.0,
+      "critical_false_positives": 0,
+      "critical_false_positive_names": [],
+      "human_review_expected": [],
+      "human_review_flagged": [],
+      "human_review_match": true
+    },
+    {
+      "acta_id": "acta_b",
+      "field_scores": [
+        {
+          "field": "fecha_constitucion",
+          "metric": "iso_exact",
+          "score": 1.0,
+          "weight": 0.1,
+          "weighted": 0.1,
+          "passed": true,
+          "detail": "pred=2020-07-22 gt=2020-07-22"
+        },
+        {
+          "field": "numero_escritura",
+          "metric": "digits_exact",
+          "score": 1.0,
+          "weight": 0.1,
+          "weighted": 0.1,
+          "passed": true,
+          "detail": "pred=12890 gt=12890"
+        },
+        {
+          "field": "capital_social_actual",
+          "metric": "numeric_tolerance",
+          "score": 1.0,
+          "weight": 0.2,
+          "weighted": 0.2,
+          "passed": true,
+          "detail": "pred=250000.00 gt=250000.00"
+        },
+        {
+          "field": "razon_social",
+          "metric": "token_sort_ratio",
+          "score": 1.0,
+          "weight": 0.1,
+          "weighted": 0.1,
+          "passed": true,
+          "detail": "similarity=1.0000 threshold=0.90"
+        },
+        {
+          "field": "notario",
+          "metric": "notary_combined",
+          "score": 1.0,
+          "weight": 0.1,
+          "weighted": 0.1,
+          "passed": true,
+          "detail": "number_match=True name_similarity=1.0000"
+        },
+        {
+          "field": "socios",
+          "metric": "set_f1_pct",
+          "score": 1.0,
+          "weight": 0.1,
+          "weighted": 0.1,
+          "passed": true,
+          "detail": "P=1.0000 R=1.0000 F1=1.0000 pct_accuracy=1.0000"
+        },
+        {
+          "field": "representantes_legales",
+          "metric": "set_prf",
+          "score": 1.0,
+          "weight": 0.2,
+          "weighted": 0.2,
+          "passed": true,
+          "detail": "P=1.0000 R=1.0000 F1=1.0000 pred=1 gt=1"
+        },
+        {
+          "field": "poderes",
+          "metric": "set_f1_pairs",
+          "score": 1.0,
+          "weight": 0.1,
+          "weighted": 0.1,
+          "passed": true,
+          "detail": "P=1.0000 R=1.0000 F1=1.0000 pred=2 gt=2"
+        }
+      ],
+      "weighted_score": 1.0,
+      "penalty": 0.0,
+      "final_score": 1.0,
+      "evidence_hit_rate": 1.0,
+      "critical_false_positives": 0,
+      "critical_false_positive_names": [],
+      "human_review_expected": [
+        "capital_social_actual"
+      ],
+      "human_review_flagged": [
+        "capital_social_actual"
+      ],
+      "human_review_match": true
+    },
+    {
+      "acta_id": "acta_c",
+      "field_scores": [
+        {
+          "field": "fecha_constitucion",
+          "metric": "iso_exact",
+          "score": 1.0,
+          "weight": 0.1,
+          "weighted": 0.1,
+          "passed": true,
+          "detail": "pred=2019-05-10 gt=2019-05-10"
+        },
+        {
+          "field": "numero_escritura",
+          "metric": "digits_exact",
+          "score": 1.0,
+          "weight": 0.1,
+          "weighted": 0.1,
+          "passed": true,
+          "detail": "pred=30100 gt=30100"
+        },
+        {
+          "field": "capital_social_actual",
+          "metric": "numeric_tolerance",
+          "score": 1.0,
+          "weight": 0.2,
+          "weighted": 0.2,
+          "passed": true,
+          "detail": "pred=1000000.00 gt=1000000.00"
+        },
+        {
+          "field": "razon_social",
+          "metric": "token_sort_ratio",
+          "score": 1.0,
+          "weight": 0.1,
+          "weighted": 0.1,
+          "passed": true,
+          "detail": "similarity=1.0000 threshold=0.90"
+        },
+        {
+          "field": "notario",
+          "metric": "notary_combined",
+          "score": 1.0,
+          "weight": 0.1,
+          "weighted": 0.1,
+          "passed": true,
+          "detail": "number_match=True name_similarity=1.0000"
+        },
+        {
+          "field": "socios",
+          "metric": "set_f1_pct",
+          "score": 1.0,
+          "weight": 0.1,
+          "weighted": 0.1,
+          "passed": true,
+          "detail": "P=1.0000 R=1.0000 F1=1.0000 pct_accuracy=1.0000"
+        },
+        {
+          "field": "representantes_legales",
+          "metric": "set_prf",
+          "score": 1.0,
+          "weight": 0.2,
+          "weighted": 0.2,
+          "passed": true,
+          "detail": "P=1.0000 R=1.0000 F1=1.0000 pred=2 gt=2"
+        },
+        {
+          "field": "poderes",
+          "metric": "set_f1_pairs",
+          "score": 1.0,
+          "weight": 0.1,
+          "weighted": 0.1,
+          "passed": true,
+          "detail": "P=1.0000 R=1.0000 F1=1.0000 pred=5 gt=5"
+        }
+      ],
+      "weighted_score": 1.0,
+      "penalty": 0.0,
+      "final_score": 1.0,
+      "evidence_hit_rate": 1.0,
+      "critical_false_positives": 0,
+      "critical_false_positive_names": [],
+      "human_review_expected": [],
+      "human_review_flagged": [],
+      "human_review_match": true
+    }
+  ],
+  "overall_score": 1.0,
+  "overall_evidence_hit_rate": 1.0,
+  "total_critical_false_positives": 0,
+  "generated_at": "2026-10-19T03:52:48.341475+00:00",
+  "global_penalty": 0.0
+}

@@ -1,0 +1,363 @@
+{
+  "razon_social": {
+    "value": "COMERCIALIZADORA INDUSTRIAL DEL NORTE, S. DE R.L. DE C.V.",
+    "status": "extraido",
+    "evidence": {
+      "page_number": 1,
+      "source_quote": "adoptara la denominacion de \"COMERCIALIZADORA INDUSTRIAL DEL NORTE, S. DE R.L. DE C.V.\"",
+      "confidence_score": 1.0,
+      "confidence_source": "native_pdf",
+      "grounding_verified": true,
+      "bounding_box": null,
+      "ocr_reading": null,
+      "vlm_reading": null,
+      "vlm_legible": null,
+      "verification_probability": null,
+      "crop_path": null,
+      "page_legibility_score": null
+    },
+    "requires_human_review": false,
+    "review_reason": null
+  },
+  "fecha_constitucion": {
+    "value": "2020-07-22",
+    "status": "extraido",
+    "evidence": {
+      "page_number": 1,
+      "source_quote": "En la Ciudad de Monterrey, Estado de Nuevo Leon, a 22 de julio de 2020",
+      "confidence_score": 1.0,
+      "confidence_source": "native_pdf",
+      "grounding_verified": true,
+      "bounding_box": null,
+      "ocr_reading": null,
+      "vlm_reading": null,
+      "vlm_legible": null,
+      "verification_probability": null,
+      "crop_path": null,
+      "page_legibility_score": null
+    },
+    "requires_human_review": false,
+    "review_reason": null
+  },
+  "numero_escritura": {
+    "value": "12,890",
+    "status": "extraido",
+    "evidence": {
+      "page_number": 1,
+      "source_quote": "ESCRITURA PUBLICA NUMERO 12,890 (DOCE MIL OCHOCIENTOS NOVENTA)",
+      "confidence_score": 1.0,
+      "confidence_source": "native_pdf",
+      "grounding_verified": true,
+      "bounding_box": null,
+      "ocr_reading": null,
+      "vlm_reading": null,
+      "vlm_legible": null,
+      "verification_probability": null,
+      "crop_path": null,
+      "page_legibility_score": null
+    },
+    "requires_human_review": false,
+    "review_reason": null
+  },
+  "notario": {
+    "value": {
+      "nombre": "FERNANDO GARZA TREVINO",
+      "numero_notaria": 42,
+      "entidad_federativa": "Nuevo Leon"
+    },
+    "status": "extraido",
+    "evidence": {
+      "page_number": 1,
+      "source_quote": "Licenciado FERNANDO GARZA TREVINO, Titular de la Notaria Publica Numero 42 del Primer Distrito Registral en el Estado de Nuevo Leon",
+      "confidence_score": 1.0,
+      "confidence_source": "native_pdf",
+      "grounding_verified": true,
+      "bounding_box": null,
+      "ocr_reading": null,
+      "vlm_reading": null,
+      "vlm_legible": null,
+      "verification_probability": null,
+      "crop_path": null,
+      "page_legibility_score": null
+    },
+    "requires_human_review": false,
+    "review_reason": null
+  },
+  "socios": {
+    "value": [
+      {
+        "nombre": "JORGE ALBERTO SALINAS MORA",
+        "rfc": null,
+        "acciones": 150,
+        "valor_aportacion": 150000.0,
+        "porcentaje": 60.0,
+        "evidence": {
+          "page_number": 2,
+          "source_quote": "JORGE ALBERTO SALINAS MORA (150 partes sociales, $150,000.00, 60.0%)",
+          "confidence_score": 0.94,
+          "confidence_source": "ocr_engine",
+          "grounding_verified": true,
+          "bounding_box": {
+            "x1": 72.0,
+            "y1": 480.0,
+            "x2": 540.0,
+            "y2": 545.0
+          },
+          "ocr_reading": null,
+          "vlm_reading": null,
+          "vlm_legible": null,
+          "verification_probability": null,
+          "crop_path": null,
+          "page_legibility_score": 0.39
+        }
+      },
+      {
+        "nombre": "PATRICIA EUGENIA LOZANO VELA",
+        "rfc": null,
+        "acciones": 100,
+        "valor_aportacion": 100000.0,
+        "porcentaje": 40.0,
+        "evidence": {
+          "page_number": 2,
+          "source_quote": "PATRICIA EUGENIA LOZANO VELA (100 partes sociales, $100,000.00, 40.0%)",
+          "confidence_score": 0.94,
+          "confidence_source": "ocr_engine",
+          "grounding_verified": true,
+          "bounding_box": {
+            "x1": 72.0,
+            "y1": 480.0,
+            "x2": 540.0,
+            "y2": 545.0
+          },
+          "ocr_reading": null,
+          "vlm_reading": null,
+          "vlm_legible": null,
+          "verification_probability": null,
+          "crop_path": null,
+          "page_legibility_score": 0.39
+        }
+      }
+    ],
+    "status": "extraido",
+    "evidence": {
+      "page_number": 2,
+      "source_quote": "JORGE ALBERTO SALINAS MORA (150 partes sociales, $150,000.00, 60.0%)",
+      "confidence_score": 0.94,
+      "confidence_source": "ocr_engine",
+      "grounding_verified": true,
+      "bounding_box": {
+        "x1": 72.0,
+        "y1": 480.0,
+        "x2": 540.0,
+        "y2": 545.0
+      },
+      "ocr_reading": null,
+      "vlm_reading": null,
+      "vlm_legible": null,
+      "verification_probability": null,
+      "crop_path": null,
+      "page_legibility_score": 0.39
+    },
+    "requires_human_review": false,
+    "review_reason": null
+  },
+  "representantes_legales": {
+    "value": [
+      {
+        "nombre": "JORGE ALBERTO SALINAS MORA",
+        "nombre_normalizado": "JORGE ALBERTO SALINAS MORA",
+        "cargo": "Gerente General",
+        "vigente": true,
+        "fecha_nombramiento": "2020-07-22",
+        "evidence": {
+          "page_number": 2,
+          "source_quote": "GERENTE GENERAL: JORGE ALBERTO SALINAS MORA",
+          "confidence_score": 0.94,
+          "confidence_source": "decisions_predicate",
+          "grounding_verified": true,
+          "bounding_box": {
+            "x1": 72.0,
+            "y1": 565.0,
+            "x2": 540.0,
+            "y2": 615.0
+          },
+          "ocr_reading": "CLAUSULA SEPTIMA.- ADMINISTRACION: GERENTE GENERAL: JORGE ALBERTO SALINAS MORA con PODER GENERAL PARA PLEITOS Y COBRANZAS Y ACTOS DE ADMINISTRACION (Individual).",
+          "vlm_reading": "CLAUSULA SEPTIMA.- ADMINISTRACION: GERENTE GENERAL: JORGE ALBERTO SALINAS MORA con PODER GENERAL PARA PLEITOS Y COBRANZAS Y ACTOS DE ADMINISTRACION (Individual).",
+          "vlm_legible": true,
+          "verification_probability": 0.97,
+          "crop_path": "outputs/crops/acta_b_p2_representantes_legales_bbox_2.png",
+          "page_legibility_score": 0.39
+        }
+      }
+    ],
+    "status": "extraido",
+    "evidence": {
+      "page_number": 2,
+      "source_quote": "GERENTE GENERAL: JORGE ALBERTO SALINAS MORA",
+      "confidence_score": 0.94,
+      "confidence_source": "decisions_predicate",
+      "grounding_verified": true,
+      "bounding_box": {
+        "x1": 72.0,
+        "y1": 565.0,
+        "x2": 540.0,
+        "y2": 615.0
+      },
+      "ocr_reading": "CLAUSULA SEPTIMA.- ADMINISTRACION: GERENTE GENERAL: JORGE ALBERTO SALINAS MORA con PODER GENERAL PARA PLEITOS Y COBRANZAS Y ACTOS DE ADMINISTRACION (Individual).",
+      "vlm_reading": "CLAUSULA SEPTIMA.- ADMINISTRACION: GERENTE GENERAL: JORGE ALBERTO SALINAS MORA con PODER GENERAL PARA PLEITOS Y COBRANZAS Y ACTOS DE ADMINISTRACION (Individual).",
+      "vlm_legible": true,
+      "verification_probability": 0.97,
+      "crop_path": "outputs/crops/acta_b_p2_representantes_legales_bbox.png",
+      "page_legibility_score": 0.39
+    },
+    "requires_human_review": false,
+    "review_reason": null
+  },
+  "poderes": {
+    "value": [
+      {
+        "otorgado_a": "JORGE ALBERTO SALINAS MORA",
+        "tipo_poder": "Poder General para Pleitos y Cobranzas",
+        "modalidad": "Individual",
+        "vigente": true,
+        "evidence": {
+          "page_number": 2,
+          "source_quote": "GERENTE GENERAL: JORGE ALBERTO SALINAS MORA con PODER GENERAL PARA PLEITOS Y COBRANZAS Y ACTOS DE ADMINISTRACION (Individual)",
+          "confidence_score": 0.94,
+          "confidence_source": "decisions_predicate",
+          "grounding_verified": true,
+          "bounding_box": {
+            "x1": 72.0,
+            "y1": 565.0,
+            "x2": 540.0,
+            "y2": 615.0
+          },
+          "ocr_reading": "CLAUSULA SEPTIMA.- ADMINISTRACION: GERENTE GENERAL: JORGE ALBERTO SALINAS MORA con PODER GENERAL PARA PLEITOS Y COBRANZAS Y ACTOS DE ADMINISTRACION (Individual).",
+          "vlm_reading": "CLAUSULA SEPTIMA.- ADMINISTRACION: GERENTE GENERAL: JORGE ALBERTO SALINAS MORA con PODER GENERAL PARA PLEITOS Y COBRANZAS Y ACTOS DE ADMINISTRACION (Individual).",
+          "vlm_legible": true,
+          "verification_probability": 0.97,
+          "crop_path": "outputs/crops/acta_b_p2_poderes_bbox_2.png",
+          "page_legibility_score": 0.39
+        }
+      },
+      {
+        "otorgado_a": "JORGE ALBERTO SALINAS MORA",
+        "tipo_poder": "Poder General para Actos de Administración",
+        "modalidad": "Individual",
+        "vigente": true,
+        "evidence": {
+          "page_number": 2,
+          "source_quote": "GERENTE GENERAL: JORGE ALBERTO SALINAS MORA con PODER GENERAL PARA PLEITOS Y COBRANZAS Y ACTOS DE ADMINISTRACION (Individual)",
+          "confidence_score": 0.94,
+          "confidence_source": "decisions_predicate",
+          "grounding_verified": true,
+          "bounding_box": {
+            "x1": 72.0,
+            "y1": 565.0,
+            "x2": 540.0,
+            "y2": 615.0
+          },
+          "ocr_reading": "CLAUSULA SEPTIMA.- ADMINISTRACION: GERENTE GENERAL: JORGE ALBERTO SALINAS MORA con PODER GENERAL PARA PLEITOS Y COBRANZAS Y ACTOS DE ADMINISTRACION (Individual).",
+          "vlm_reading": "CLAUSULA SEPTIMA.- ADMINISTRACION: GERENTE GENERAL: JORGE ALBERTO SALINAS MORA con PODER GENERAL PARA PLEITOS Y COBRANZAS Y ACTOS DE ADMINISTRACION (Individual).",
+          "vlm_legible": true,
+          "verification_probability": 0.97,
+          "crop_path": "outputs/crops/acta_b_p2_poderes_bbox_3.png",
+          "page_legibility_score": 0.39
+        }
+      }
+    ],
+    "status": "extraido",
+    "evidence": {
+      "page_number": 2,
+      "source_quote": "GERENTE GENERAL: JORGE ALBERTO SALINAS MORA con PODER GENERAL PARA PLEITOS Y COBRANZAS Y ACTOS DE ADMINISTRACION (Individual)",
+      "confidence_score": 0.94,
+      "confidence_source": "decisions_predicate",
+      "grounding_verified": true,
+      "bounding_box": {
+        "x1": 72.0,
+        "y1": 565.0,
+        "x2": 540.0,
+        "y2": 615.0
+      },
+      "ocr_reading": "CLAUSULA SEPTIMA.- ADMINISTRACION: GERENTE GENERAL: JORGE ALBERTO SALINAS MORA con PODER GENERAL PARA PLEITOS Y COBRANZAS Y ACTOS DE ADMINISTRACION (Individual).",
+      "vlm_reading": "CLAUSULA SEPTIMA.- ADMINISTRACION: GERENTE GENERAL: JORGE ALBERTO SALINAS MORA con PODER GENERAL PARA PLEITOS Y COBRANZAS Y ACTOS DE ADMINISTRACION (Individual).",
+      "vlm_legible": true,
+      "verification_probability": 0.97,
+      "crop_path": "outputs/crops/acta_b_p2_poderes_bbox.png",
+      "page_legibility_score": 0.39
+    },
+    "requires_human_review": false,
+    "review_reason": null
+  },
+  "capital_social_actual": {
+    "value": {
+      "monto_numerico": 250000.0,
+      "moneda": "MXN",
+      "monto_en_letra": "DOSCIENTOS CINCUENTA MIL PESOS 00/100 M.N.",
+      "fecha_acto_vigente": "2020-07-22",
+      "escritura_origen": "12,890"
+    },
+    "status": "extraido",
+    "evidence": {
+      "page_number": 2,
+      "source_quote": "QUINTA.- El capital social es de $250,000.00 (DOSCIENTOS CINCUENTA MIL PESOS 00/100 M.N.).",
+      "confidence_score": 0.56,
+      "confidence_source": "decisions_predicate",
+      "grounding_verified": true,
+      "bounding_box": {
+        "x1": 72.0,
+        "y1": 410.0,
+        "x2": 520.0,
+        "y2": 455.0
+      },
+      "ocr_reading": "QUINTA.- El capital social es de $250,000.00 (DOSCIENTOS CINCUENTA MIL PESOS 00/100 M.N.).",
+      "vlm_reading": "QUINTA.- El capital social es de $250,000.00 (DOSCIENTOS CINCUENTA MIL PESOS 00/100 M.N.).",
+      "vlm_legible": true,
+      "verification_probability": 0.78,
+      "crop_path": "outputs/crops/acta_b_p2_capital_social_actual_bbox.png",
+      "page_legibility_score": 0.39
+    },
+    "requires_human_review": true,
+    "review_reason": "Low OCR confidence (0.72) and Decisions predicate confidence (0.56 < 0.80) due to overlapping notary seal on page 2 bbox [72.0, 410.0, 520.0, 455.0]."
+  },
+  "amendment_history": [
+    {
+      "event_type": "constitucion_original",
+      "fecha_acto": "2020-07-22",
+      "numero_escritura": "12,890",
+      "descripcion": "Original incorporation of COMERCIALIZADORA INDUSTRIAL DEL NORTE, S. DE R.L. DE C.V. before Notary Public 42 of Nuevo Leon.",
+      "sujeto_afectado": null,
+      "monto_nuevo": 250000.0,
+      "matched_canonical_entity": null,
+      "fuzzy_match_score": null,
+      "evidence": {
+        "page_number": 1,
+        "source_quote": "ESCRITURA PUBLICA NUMERO 12,890 (DOCE MIL OCHOCIENTOS NOVENTA)",
+        "confidence_score": 1.0,
+        "confidence_source": "native_pdf",
+        "grounding_verified": true,
+        "bounding_box": null,
+        "ocr_reading": null,
+        "vlm_reading": null,
+        "vlm_legible": null,
+        "verification_probability": null,
+        "crop_path": null,
+        "page_legibility_score": null
+      },
+      "revoked_appointment_evidence": []
+    }
+  ],
+  "audit_metadata": {
+    "job_id": "5fa600fea1ec",
+    "doc_sha256": "06ccca91d22921abd4d8578b2eb26a7520641fc5c4310bf5c719cf9d8f10dacf",
+    "document_filename": "acta_b.pdf",
+    "schema_version": "1.0.0",
+    "model_version": "pre-verified-cache-v1",
+    "total_pages": 2,
+    "native_pages_count": 1,
+    "ocr_pages_count": 1,
+    "global_human_review_required": true,
+    "processing_time_ms": 144.747,
+    "security_flags": []
+  }
+}

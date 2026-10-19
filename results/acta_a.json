@@ -1,0 +1,399 @@
+{
+  "razon_social": {
+    "value": "TECNOLOGIA FINANCIERA DEL VALLE, S.A. DE C.V.",
+    "status": "extraido",
+    "evidence": {
+      "page_number": 1,
+      "source_quote": "La sociedad se denominara \"TECNOLOGIA FINANCIERA DEL VALLE\", seguida de las palabras SOCIEDAD ANONIMA DE CAPITAL VARIABLE",
+      "confidence_score": 1.0,
+      "confidence_source": "native_pdf",
+      "grounding_verified": true,
+      "bounding_box": null,
+      "ocr_reading": null,
+      "vlm_reading": null,
+      "vlm_legible": null,
+      "verification_probability": null,
+      "crop_path": null,
+      "page_legibility_score": null
+    },
+    "requires_human_review": false,
+    "review_reason": null
+  },
+  "fecha_constitucion": {
+    "value": "2021-03-15",
+    "status": "extraido",
+    "evidence": {
+      "page_number": 1,
+      "source_quote": "En la Ciudad de Mexico, a los 15 dias del mes de marzo de 2021",
+      "confidence_score": 1.0,
+      "confidence_source": "native_pdf",
+      "grounding_verified": true,
+      "bounding_box": null,
+      "ocr_reading": null,
+      "vlm_reading": null,
+      "vlm_legible": null,
+      "verification_probability": null,
+      "crop_path": null,
+      "page_legibility_score": null
+    },
+    "requires_human_review": false,
+    "review_reason": null
+  },
+  "numero_escritura": {
+    "value": "45,120",
+    "status": "extraido",
+    "evidence": {
+      "page_number": 1,
+      "source_quote": "INSTRUMENTO PUBLICO NUMERO 45,120 (CUARENTA Y CINCO MIL CIENTO VEINTE)",
+      "confidence_score": 1.0,
+      "confidence_source": "native_pdf",
+      "grounding_verified": true,
+      "bounding_box": null,
+      "ocr_reading": null,
+      "vlm_reading": null,
+      "vlm_legible": null,
+      "verification_probability": null,
+      "crop_path": null,
+      "page_legibility_score": null
+    },
+    "requires_human_review": false,
+    "review_reason": null
+  },
+  "notario": {
+    "value": {
+      "nombre": "ROBERTO MENDEZ LARA",
+      "numero_notaria": 88,
+      "entidad_federativa": "Ciudad de Mexico"
+    },
+    "status": "extraido",
+    "evidence": {
+      "page_number": 1,
+      "source_quote": "el Licenciado ROBERTO MENDEZ LARA, Titular de la Notaria Publica Numero 88 de la Ciudad de Mexico",
+      "confidence_score": 1.0,
+      "confidence_source": "native_pdf",
+      "grounding_verified": true,
+      "bounding_box": null,
+      "ocr_reading": null,
+      "vlm_reading": null,
+      "vlm_legible": null,
+      "verification_probability": null,
+      "crop_path": null,
+      "page_legibility_score": null
+    },
+    "requires_human_review": false,
+    "review_reason": null
+  },
+  "socios": {
+    "value": [
+      {
+        "nombre": "CARLOS EDUARDO RAMIREZ SOTO",
+        "rfc": "RASC850412HM1",
+        "acciones": 300,
+        "valor_aportacion": 300000.0,
+        "porcentaje": 60.0,
+        "evidence": {
+          "page_number": 2,
+          "source_quote": "1. CARLOS EDUARDO RAMIREZ SOTO, con RFC RASC850412HM1, suscribe 300 acciones con valor de $300,000.00 (60.0%)",
+          "confidence_score": 1.0,
+          "confidence_source": "native_pdf",
+          "grounding_verified": true,
+          "bounding_box": null,
+          "ocr_reading": null,
+          "vlm_reading": null,
+          "vlm_legible": null,
+          "verification_probability": null,
+          "crop_path": null,
+          "page_legibility_score": null
+        }
+      },
+      {
+        "nombre": "SOFIA VALENTINA HERRERA CRUZ",
+        "rfc": "HECS901105MJ2",
+        "acciones": 200,
+        "valor_aportacion": 200000.0,
+        "porcentaje": 40.0,
+        "evidence": {
+          "page_number": 2,
+          "source_quote": "2. SOFIA VALENTINA HERRERA CRUZ, con RFC HECS901105MJ2, suscribe 200 acciones con valor de $200,000.00 (40.0%)",
+          "confidence_score": 1.0,
+          "confidence_source": "native_pdf",
+          "grounding_verified": true,
+          "bounding_box": null,
+          "ocr_reading": null,
+          "vlm_reading": null,
+          "vlm_legible": null,
+          "verification_probability": null,
+          "crop_path": null,
+          "page_legibility_score": null
+        }
+      }
+    ],
+    "status": "extraido",
+    "evidence": {
+      "page_number": 2,
+      "source_quote": "1. CARLOS EDUARDO RAMIREZ SOTO, con RFC RASC850412HM1, suscribe 300 acciones con valor de $300,000.00 (60.0%)",
+      "confidence_score": 1.0,
+      "confidence_source": "native_pdf",
+      "grounding_verified": true,
+      "bounding_box": null,
+      "ocr_reading": null,
+      "vlm_reading": null,
+      "vlm_legible": null,
+      "verification_probability": null,
+      "crop_path": null,
+      "page_legibility_score": null
+    },
+    "requires_human_review": false,
+    "review_reason": null
+  },
+  "representantes_legales": {
+    "value": [
+      {
+        "nombre": "CARLOS EDUARDO RAMIREZ SOTO",
+        "nombre_normalizado": "CARLOS EDUARDO RAMIREZ SOTO",
+        "cargo": "Administrador Unico",
+        "vigente": true,
+        "fecha_nombramiento": "2021-03-15",
+        "evidence": {
+          "page_number": 2,
+          "source_quote": "Se designa como ADMINISTRADOR UNICO al señor CARLOS EDUARDO RAMIREZ SOTO",
+          "confidence_score": 1.0,
+          "confidence_source": "native_pdf",
+          "grounding_verified": true,
+          "bounding_box": null,
+          "ocr_reading": null,
+          "vlm_reading": null,
+          "vlm_legible": null,
+          "verification_probability": null,
+          "crop_path": null,
+          "page_legibility_score": null
+        }
+      },
+      {
+        "nombre": "SOFIA VALENTINA HERRERA CRUZ",
+        "nombre_normalizado": "SOFIA VALENTINA HERRERA CRUZ",
+        "cargo": "Apoderada General",
+        "vigente": true,
+        "fecha_nombramiento": "2021-03-15",
+        "evidence": {
+          "page_number": 2,
+          "source_quote": "Se designa como APODERADA GENERAL a la señora SOFIA VALENTINA HERRERA CRUZ",
+          "confidence_score": 1.0,
+          "confidence_source": "native_pdf",
+          "grounding_verified": true,
+          "bounding_box": null,
+          "ocr_reading": null,
+          "vlm_reading": null,
+          "vlm_legible": null,
+          "verification_probability": null,
+          "crop_path": null,
+          "page_legibility_score": null
+        }
+      }
+    ],
+    "status": "extraido",
+    "evidence": {
+      "page_number": 2,
+      "source_quote": "Se designa como ADMINISTRADOR UNICO al señor CARLOS EDUARDO RAMIREZ SOTO",
+      "confidence_score": 1.0,
+      "confidence_source": "native_pdf",
+      "grounding_verified": true,
+      "bounding_box": null,
+      "ocr_reading": null,
+      "vlm_reading": null,
+      "vlm_legible": null,
+      "verification_probability": null,
+      "crop_path": null,
+      "page_legibility_score": null
+    },
+    "requires_human_review": false,
+    "review_reason": null
+  },
+  "poderes": {
+    "value": [
+      {
+        "otorgado_a": "CARLOS EDUARDO RAMIREZ SOTO",
+        "tipo_poder": "Poder General para Pleitos y Cobranzas",
+        "modalidad": "Individual",
+        "vigente": true,
+        "evidence": {
+          "page_number": 2,
+          "source_quote": "Se designa como ADMINISTRADOR UNICO al señor CARLOS EDUARDO RAMIREZ SOTO, a quien se le confiere PODER GENERAL PARA PLEITOS Y COBRANZAS, PODER GENERAL PARA ACTOS DE ADMINISTRACION Y PODER GENERAL PARA ACTOS DE DOMINIO, para ser ejercido de manera INDIVIDUAL",
+          "confidence_score": 1.0,
+          "confidence_source": "native_pdf",
+          "grounding_verified": true,
+          "bounding_box": null,
+          "ocr_reading": null,
+          "vlm_reading": null,
+          "vlm_legible": null,
+          "verification_probability": null,
+          "crop_path": null,
+          "page_legibility_score": null
+        }
+      },
+      {
+        "otorgado_a": "CARLOS EDUARDO RAMIREZ SOTO",
+        "tipo_poder": "Poder General para Actos de Administración",
+        "modalidad": "Individual",
+        "vigente": true,
+        "evidence": {
+          "page_number": 2,
+          "source_quote": "Se designa como ADMINISTRADOR UNICO al señor CARLOS EDUARDO RAMIREZ SOTO, a quien se le confiere PODER GENERAL PARA PLEITOS Y COBRANZAS, PODER GENERAL PARA ACTOS DE ADMINISTRACION Y PODER GENERAL PARA ACTOS DE DOMINIO, para ser ejercido de manera INDIVIDUAL",
+          "confidence_score": 1.0,
+          "confidence_source": "native_pdf",
+          "grounding_verified": true,
+          "bounding_box": null,
+          "ocr_reading": null,
+          "vlm_reading": null,
+          "vlm_legible": null,
+          "verification_probability": null,
+          "crop_path": null,
+          "page_legibility_score": null
+        }
+      },
+      {
+        "otorgado_a": "CARLOS EDUARDO RAMIREZ SOTO",
+        "tipo_poder": "Poder General para Actos de Dominio",
+        "modalidad": "Individual",
+        "vigente": true,
+        "evidence": {
+          "page_number": 2,
+          "source_quote": "Se designa como ADMINISTRADOR UNICO al señor CARLOS EDUARDO RAMIREZ SOTO, a quien se le confiere PODER GENERAL PARA PLEITOS Y COBRANZAS, PODER GENERAL PARA ACTOS DE ADMINISTRACION Y PODER GENERAL PARA ACTOS DE DOMINIO, para ser ejercido de manera INDIVIDUAL",
+          "confidence_score": 1.0,
+          "confidence_source": "native_pdf",
+          "grounding_verified": true,
+          "bounding_box": null,
+          "ocr_reading": null,
+          "vlm_reading": null,
+          "vlm_legible": null,
+          "verification_probability": null,
+          "crop_path": null,
+          "page_legibility_score": null
+        }
+      },
+      {
+        "otorgado_a": "SOFIA VALENTINA HERRERA CRUZ",
+        "tipo_poder": "Poder General para Pleitos y Cobranzas",
+        "modalidad": "Individual",
+        "vigente": true,
+        "evidence": {
+          "page_number": 2,
+          "source_quote": "Se designa como APODERADA GENERAL a la señora SOFIA VALENTINA HERRERA CRUZ, a quien se le confiere PODER GENERAL PARA PLEITOS Y COBRANZAS Y ACTOS DE ADMINISTRACION, para ser ejercido de manera INDIVIDUAL",
+          "confidence_score": 1.0,
+          "confidence_source": "native_pdf",
+          "grounding_verified": true,
+          "bounding_box": null,
+          "ocr_reading": null,
+          "vlm_reading": null,
+          "vlm_legible": null,
+          "verification_probability": null,
+          "crop_path": null,
+          "page_legibility_score": null
+        }
+      },
+      {
+        "otorgado_a": "SOFIA VALENTINA HERRERA CRUZ",
+        "tipo_poder": "Poder General para Actos de Administración",
+        "modalidad": "Individual",
+        "vigente": true,
+        "evidence": {
+          "page_number": 2,
+          "source_quote": "Se designa como APODERADA GENERAL a la señora SOFIA VALENTINA HERRERA CRUZ, a quien se le confiere PODER GENERAL PARA PLEITOS Y COBRANZAS Y ACTOS DE ADMINISTRACION, para ser ejercido de manera INDIVIDUAL",
+          "confidence_score": 1.0,
+          "confidence_source": "native_pdf",
+          "grounding_verified": true,
+          "bounding_box": null,
+          "ocr_reading": null,
+          "vlm_reading": null,
+          "vlm_legible": null,
+          "verification_probability": null,
+          "crop_path": null,
+          "page_legibility_score": null
+        }
+      }
+    ],
+    "status": "extraido",
+    "evidence": {
+      "page_number": 2,
+      "source_quote": "Se designa como ADMINISTRADOR UNICO al señor CARLOS EDUARDO RAMIREZ SOTO, a quien se le confiere PODER GENERAL PARA PLEITOS Y COBRANZAS, PODER GENERAL PARA ACTOS DE ADMINISTRACION Y PODER GENERAL PARA ACTOS DE DOMINIO, para ser ejercido de manera INDIVIDUAL",
+      "confidence_score": 1.0,
+      "confidence_source": "native_pdf",
+      "grounding_verified": true,
+      "bounding_box": null,
+      "ocr_reading": null,
+      "vlm_reading": null,
+      "vlm_legible": null,
+      "verification_probability": null,
+      "crop_path": null,
+      "page_legibility_score": null
+    },
+    "requires_human_review": false,
+    "review_reason": null
+  },
+  "capital_social_actual": {
+    "value": {
+      "monto_numerico": 500000.0,
+      "moneda": "MXN",
+      "monto_en_letra": "QUINIENTOS MIL PESOS 00/100 MONEDA NACIONAL",
+      "fecha_acto_vigente": "2021-03-15",
+      "escritura_origen": "45,120"
+    },
+    "status": "extraido",
+    "evidence": {
+      "page_number": 1,
+      "source_quote": "El capital social fijo es la cantidad de $500,000.00 (QUINIENTOS MIL PESOS 00/100 MONEDA NACIONAL)",
+      "confidence_score": 1.0,
+      "confidence_source": "native_pdf",
+      "grounding_verified": true,
+      "bounding_box": null,
+      "ocr_reading": null,
+      "vlm_reading": null,
+      "vlm_legible": null,
+      "verification_probability": null,
+      "crop_path": null,
+      "page_legibility_score": null
+    },
+    "requires_human_review": false,
+    "review_reason": null
+  },
+  "amendment_history": [
+    {
+      "event_type": "constitucion_original",
+      "fecha_acto": "2021-03-15",
+      "numero_escritura": "45,120",
+      "descripcion": "Original incorporation of TECNOLOGIA FINANCIERA DEL VALLE, S.A. DE C.V. before Notary Public 88 of Ciudad de Mexico.",
+      "sujeto_afectado": null,
+      "monto_nuevo": 500000.0,
+      "matched_canonical_entity": null,
+      "fuzzy_match_score": null,
+      "evidence": {
+        "page_number": 1,
+        "source_quote": "hago constar el CONTRATO DE SOCIEDAD MERCANTIL",
+        "confidence_score": 1.0,
+        "confidence_source": "native_pdf",
+        "grounding_verified": true,
+        "bounding_box": null,
+        "ocr_reading": null,
+        "vlm_reading": null,
+        "vlm_legible": null,
+        "verification_probability": null,
+        "crop_path": null,
+        "page_legibility_score": null
+      },
+      "revoked_appointment_evidence": []
+    }
+  ],
+  "audit_metadata": {
+    "job_id": "9302b59a6e13",
+    "doc_sha256": "822992832a9a659892b2e47ef53f0b8a01e64af1597355bfe86b8aa28f69c697",
+    "document_filename": "acta_a.pdf",
+    "schema_version": "1.0.0",
+    "model_version": "pre-verified-cache-v1",
+    "total_pages": 2,
+    "native_pages_count": 2,
+    "ocr_pages_count": 0,
+    "global_human_review_required": false,
+    "processing_time_ms": 6.3,
+    "security_flags": []
+  }
+}

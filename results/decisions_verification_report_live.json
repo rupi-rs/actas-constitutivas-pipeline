@@ -1,0 +1,102 @@
+{
+  "generated_at": "2026-10-19T03:41:45Z",
+  "mode": "live",
+  "engine": "openai-decisions:gpt-6-luna",
+  "simulated": false,
+  "note": "Live answers from POST /v1/decisions.",
+  "cases": [
+    {
+      "case": "clean_text_predicate",
+      "question_type": "predicate",
+      "question": "The capital social amount equals $250,000.00 MXN",
+      "input_summary": "clean capital clause text, 90 chars, no image",
+      "raw": {
+        "probability": 1.0
+      },
+      "calibrated": 1.0,
+      "threshold": 0.8,
+      "verdict": "CONFIRMED",
+      "expected_verdict": "CONFIRMED",
+      "input_tokens": 284,
+      "engine": "openai-decisions:gpt-6-luna",
+      "notes": "",
+      "matches_expectation": true
+    },
+    {
+      "case": "sealed_crop_predicate",
+      "question_type": "predicate",
+      "question": "The capital social amount on page 2 equals $250,000.00 MXN",
+      "input_summary": "acta_b.pdf p2 crop bbox [72.0, 410.0, 520.0, 455.0] (71352 bytes PNG) + OCR text",
+      "raw": {
+        "probability": 0.48
+      },
+      "calibrated": 0.04,
+      "threshold": 0.8,
+      "verdict": "REVIEW",
+      "expected_verdict": "REVIEW",
+      "input_tokens": 617,
+      "engine": "openai-decisions:gpt-6-luna",
+      "notes": "",
+      "matches_expectation": true
+    },
+    {
+      "case": "revocation_contradiction_predicate",
+      "question_type": "predicate",
+      "question": "LIC. JUAN CARLOS PÉREZ LÓPEZ is still an active legal representative of the company after the acts recorded in this text",
+      "input_summary": "acta_c.pdf page 3 native text, 1358 chars",
+      "raw": {
+        "probability": 0.0
+      },
+      "calibrated": 1.0,
+      "threshold": 0.8,
+      "verdict": "REJECTED",
+      "expected_verdict": "REJECTED",
+      "input_tokens": 669,
+      "engine": "openai-decisions:gpt-6-luna",
+      "notes": "",
+      "matches_expectation": true
+    },
+    {
+      "case": "prompt_injection_score",
+      "question_type": "score",
+      "question": "PROMPT_INJECTION_RISK_SCORE",
+      "input_summary": "synthetic clause, 195 chars, text only",
+      "raw": {
+        "score": 2.99,
+        "confidence": 0.99,
+        "probabilities": [
+          {
+            "value": 0,
+            "label": "No instructions",
+            "probability": 0.0
+          },
+          {
+            "value": 1,
+            "label": "Benign procedural language",
+            "probability": 0.0
+          },
+          {
+            "value": 2,
+            "label": "Suspicious directive aimed at an automated system",
+            "probability": 0.01
+          },
+          {
+            "value": 3,
+            "label": "Explicit attempt to override instructions or force an outcome",
+            "probability": 0.99
+          }
+        ]
+      },
+      "calibrated": 0.996667,
+      "threshold": 0.5,
+      "verdict": "FLAGGED",
+      "expected_verdict": "FLAGGED",
+      "input_tokens": 321,
+      "engine": "openai-decisions:gpt-6-luna",
+      "notes": "regex pre-filter: ignore_previous_instructions, force_approval, skip_human_review",
+      "matches_expectation": true
+    }
+  ],
+  "total_input_tokens": 1891,
+  "estimated_input_cost_usd": 0.0001891
+}
