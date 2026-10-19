@@ -257,3 +257,41 @@ def render_region_png(
         ) from exc
     finally:
         document.close()  # type: ignore[no-untyped-call]
+
+
+def page_bbox(pdf_bytes: bytes, page_number: int) -> BoundingBox:
+    """Return the full-page bounding box of a PDF page.
+
+    Parameters
+    ----------
+    pdf_bytes : bytes
+        PDF binary.
+    page_number : int
+        1-indexed page number.
+
+    Returns
+    -------
+    BoundingBox
+        Page rectangle in PDF points (top-left origin).
+
+    Raises
+    ------
+    PDFInspectionError
+        If the PDF cannot be opened or the page does not exist.
+    """
+    try:
+        document = pymupdf.open(stream=pdf_bytes, filetype="pdf")  # type: ignore[no-untyped-call]
+    except Exception as exc:
+        raise PDFInspectionError("payload is not a readable PDF", {"error": str(exc)}) from exc
+    try:
+        if page_number < 1 or page_number > document.page_count:
+            raise PDFInspectionError(
+                f"page {page_number} does not exist",
+                {"page_number": page_number, "page_count": document.page_count},
+            )
+        bounds = document.load_page(page_number - 1).rect  # type: ignore[no-untyped-call]
+        return BoundingBox(
+            x1=float(bounds.x0), y1=float(bounds.y0), x2=float(bounds.x1), y2=float(bounds.y1)
+        )
+    finally:
+        document.close()  # type: ignore[no-untyped-call]

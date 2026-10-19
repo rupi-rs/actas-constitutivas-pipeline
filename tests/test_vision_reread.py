@@ -21,6 +21,7 @@ from src.providers.interfaces import (
     PageContent,
     VisionReadResult,
 )
+from src.providers.decision_scorer import DeterministicDecisionsScorer
 from src.providers.llm_provider import CachedLLMProvider, OpenAILLMProvider
 from src.providers.ocr_provider import DeterministicOCRProvider
 from src.providers.verifier_provider import (
@@ -601,6 +602,7 @@ def test_live_miss_persists_vlm_reads_round_trip(
         verifier=DeterministicVerifierProvider(live_repo),
         llm=SpyLLM(CachedLLMProvider(live_repo)),
         vision=DeterministicVLMProvider(live_repo),
+        scorer=DeterministicDecisionsScorer(live_repo),
     )
     repository = FileSystemRepository(settings)
     cached = ProviderBundle(
@@ -614,6 +616,7 @@ def test_live_miss_persists_vlm_reads_round_trip(
     persisted = json.loads(path.read_text(encoding="utf-8"))
     assert persisted["vlm_reads"] == payload["vlm_reads"]
     assert persisted["ocr_pages"] == payload["ocr_pages"]
+    assert persisted["decision_scores"] == payload["decision_scores"]
     replayed = DeterministicVLMProvider(repository).reread_region(
         first.doc_sha256, 2, BoundingBox.from_sequence(list(ACTA_B_CAPITAL_BBOX)), None, ""
     )
