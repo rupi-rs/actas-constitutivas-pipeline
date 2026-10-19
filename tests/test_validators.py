@@ -21,6 +21,7 @@ from src.pipeline.validators import (
     canonicalize_numbers,
     digit_tokens,
     normalize_for_grounding,
+    notary_clause_numbers,
     spanish_amount_to_words,
     spanish_numbers_in_text,
     spanish_ordinals_in_text,
@@ -1023,3 +1024,96 @@ def test_value_in_quote_deed_number_formats(
     """
     model = _scalar_model(raw_extractions["acta_c"], "numero_escritura", quote)
     assert ("numero_escritura" not in verify_value_in_quote(model)) is supported
+
+
+LIVE_ACTA_B_NOTARY_QUOTE: str = "FERNANDO GARZA TREVINO"
+"""Exact notario quote returned by gpt-6-luna for Acta B page 1 in the live run."""
+
+
+def test_value_in_quote_notary_name_only_quote_uses_page_clause(
+    settings: Settings, sample_paths: dict[str, Path], raw_extractions: dict[str, RawDeedExtraction]
+) -> None:
+    """Regression: a name-only notary quote is supported by the notary clause of its page.
+
+    The live Acta B run quoted only ``"FERNANDO GARZA TREVINO"`` (native page
+    1) for the notary, whose number 42 sits in the adjacent clause and in the
+    running header of the same page; the old check required 42 inside the
+    quote and flagged a correct value.
+
+    Parameters
+    ----------
+    settings : object
+        Isolated workspace settings.
+    sample_paths : object
+        Generated sample PDF paths keyed by deed identifier.
+    raw_extractions : object
+        Cached raw extractions per acta.
+    """
+    pages = _page_texts(settings, sample_paths["acta_b"])
+    model = raw_extractions["acta_b"]
+    assert model.notario.evidence is not None and model.notario.value is not None
+    model.notario.evidence.source_quote = LIVE_ACTA_B_NOTARY_QUOTE
+    assert model.notario.evidence.page_number == 1
+    assert notary_clause_numbers(pages[1]) == [42, 42]
+    assert verify_value_in_quote(model, page_texts=pages) == []
+    assert model.notario.requires_human_review is False
+
+    unchecked = raw_extractions["acta_b"].model_copy(deep=True)
+    assert unchecked.notario.evidence is not None
+    unchecked.notario.evidence.source_quote = LIVE_ACTA_B_NOTARY_QUOTE
+    assert verify_value_in_quote(unchecked) == ["notario"]
+
+    wrong = raw_extractions["acta_b"].model_copy(deep=True)
+    assert wrong.notario.evidence is not None and wrong.notario.value is not None
+    wrong.notario.evidence.source_quote = LIVE_ACTA_B_NOTARY_QUOTE
+    wrong.notario.value = NotaryInfo(
+        nombre="FERNANDO GARZA TREVINO", numero_notaria=24, entidad_federativa="Nuevo Leon"
+    )
+    assert verify_value_in_quote(wrong, page_texts=pages) == ["notario"]
+
+
+def test_value_in_quote_notary_clause_in_quote_must_match(
+    settings: Settings, sample_paths: dict[str, Path], raw_extractions: dict[str, RawDeedExtraction]
+) -> None:
+    """A quote that states another notary number fails even when the page states the right one.
+
+    Parameters
+    ----------
+    settings : object
+        Isolated workspace settings.
+    sample_paths : object
+        Generated sample PDF paths keyed by deed identifier.
+    raw_extractions : object
+        Cached raw extractions per acta.
+    """
+    pages = _page_texts(settings, sample_paths["acta_b"])
+    model = raw_extractions["acta_b"]
+    assert model.notario.evidence is not None
+    model.notario.evidence.source_quote = (
+        "Licenciado FERNANDO GARZA TREVINO, Titular de la Notaria Publica Numero 24"
+    )
+    assert verify_value_in_quote(model, page_texts=pages) == ["notario"]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Titular de la Notaria Publica Numero 42 del Primer Distrito Registral", [42]),
+        ("NOTARIA PUBLICA NUMERO 42 - MONTERREY, NUEVO LEON", [42]),
+        ("Notario Publico numero QUINCE de Guadalajara", [15]),
+        ("Notario Publico DECIMO SEXTO de Guadalajara", [16]),
+        ("Notaría No. 7, Ciudad de México", [7]),
+        ("FERNANDO GARZA TREVINO", []),
+    ],
+)
+def test_notary_clause_numbers(text: str, expected: list[int]) -> None:
+    """Notary-number clauses yield their number in digits, words or ordinals.
+
+    Parameters
+    ----------
+    text : object
+        Clause text.
+    expected : object
+        Expected numbers.
+    """
+    assert notary_clause_numbers(text) == expected

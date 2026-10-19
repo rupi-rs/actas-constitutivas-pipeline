@@ -21,7 +21,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections import Counter
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from datetime import date
 from typing import Any, Optional, Union
 
@@ -117,6 +117,9 @@ _NUMERIC_DATE_RE: re.Pattern[str] = re.compile(r"(?<!\d)(\d{1,2})[./-](\d{1,2})[
 _ISO_DATE_RE: re.Pattern[str] = re.compile(r"(?<!\d)(\d{4})-(\d{1,2})-(\d{1,2})(?!\d)")
 _DEED_VALUE_RE: re.Pattern[str] = re.compile(r"\d{1,3}(?:[,.' ]\d{3})+|\d+")
 _NON_ALNUM_RE: re.Pattern[str] = re.compile(r"[^A-Z0-9]")
+_NOTARY_WORD_RE: re.Pattern[str] = re.compile(r"\bNOTARI[AO]S?\b")
+_NOTARY_CLAUSE_END_RE: re.Pattern[str] = re.compile(r"\s(?:DEL?|EN|CON|PARA)\s|[,;:()\[\]\n]|\s-\s")
+_NOTARY_CLAUSE_WINDOW: int = 60
 _SPANISH_MONTHS: tuple[str, ...] = (
     "ENERO",
     "FEBRERO",
@@ -1220,6 +1223,83 @@ def _number_in_quote(number: int, norm_quote: str, tokens: list[str], *, ordinal
     return number == 1 and re.search(r"\bPRIMERO\b", norm_quote) is not None
 
 
+def notary_clause_numbers(text: str) -> list[int]:
+    """Return the numbers stated in the notary-number clauses of a text.
+
+    Parameters
+    ----------
+    text : str
+        Quote or page text; it is normalized with :func:`normalize_for_grounding`.
+
+    Returns
+    -------
+    list of int
+        For every ``NOTARIA`` / ``NOTARIO`` word, the numbers written in
+        digits, Spanish words or Spanish ordinals between it and the end of
+        the clause (the first ``DE`` / ``DEL`` / ``EN``, comma, semicolon,
+        colon, parenthesis or spaced dash, within 60 characters), in order
+        (``"Notaria Publica Numero 42 del Primer Distrito"`` -> ``[42]``,
+        ``"Notario Publico numero QUINCE de Guadalajara"`` -> ``[15]``).
+    """
+    norm = normalize_for_grounding(text)
+    values: list[int] = []
+    for match in _NOTARY_WORD_RE.finditer(norm):
+        window = norm[match.end() : match.end() + _NOTARY_CLAUSE_WINDOW]
+        end = _NOTARY_CLAUSE_END_RE.search(window)
+        clause = window[: end.start()] if end is not None else window
+        values.extend(int(token) for token in digit_tokens(clause) if token)
+        values.extend(spanish_numbers_in_text(clause))
+        values.extend(spanish_ordinals_in_text(clause))
+    return values
+
+
+def _notary_supported(
+    number: int,
+    norm_quote: str,
+    tokens: list[str],
+    page_text: Optional[str],
+) -> tuple[bool, str]:
+    """Check a notary number against its quote and, if needed, its page.
+
+    Parameters
+    ----------
+    number : int
+        Extracted ``numero_notaria``.
+    norm_quote : str
+        Normalized evidence quote.
+    tokens : list of str
+        Digit groups of the quote.
+    page_text : str or None
+        Text of the evidence page, when available.
+
+    Returns
+    -------
+    tuple of (bool, str)
+        Support verdict and its source: ``"quote"`` when the quote states
+        the number, ``"quote_contradicts"`` when the quote holds a notary
+        clause with other numbers, ``"page"`` when the quote covers only
+        the notary name and a notary clause of the same page states the
+        number, ``"none"`` otherwise.
+
+    Notes
+    -----
+    Live extraction often quotes only the notary name (``"FERNANDO GARZA
+    TREVINO"``) while the number sits in the adjacent clause or the running
+    header of the same page. The number is required inside the quote only
+    when the quote itself covers a notary-number clause; otherwise a notary
+    clause on the cited page must state it. Grounding separately proves the
+    quote is on that page. When a page names several notaries, a matching
+    clause of any of them is accepted.
+    """
+    if _number_in_quote(number, norm_quote, tokens, ordinals=True):
+        return True, "quote"
+    if notary_clause_numbers(norm_quote):
+        return False, "quote_contradicts"
+    if page_text is not None and number in notary_clause_numbers(page_text):
+        return True, "page"
+    return False, "none"
+
+
 def _date_supported(value: str, norm_quote: str, tokens: list[str]) -> bool:
     """Check that an ISO date is supported by its quote.
 
@@ -1320,13 +1400,22 @@ def _deed_number_supported(value: str, norm_quote: str, tokens: list[str]) -> bo
     return number in _grouped_integers(norm_quote) or number in spanish_numbers_in_text(norm_quote)
 
 
-def verify_value_in_quote(model: DeedModel, *, job_id: str = "-", doc_sha256: str = "-") -> list[str]:
+def verify_value_in_quote(
+    model: DeedModel,
+    *,
+    page_texts: Optional[Mapping[int, str]] = None,
+    job_id: str = "-",
+    doc_sha256: str = "-",
+) -> list[str]:
     """Check that scalar values are supported by their own evidence quote.
 
     Parameters
     ----------
     model : DeedModel
         Extraction to verify (review flags mutated in place).
+    page_texts : mapping of int to str or None, default None
+        Page texts keyed by page number; used only for the notary number
+        when the quote covers just the notary name.
     job_id : str, default "-"
         Job identifier for logging.
     doc_sha256 : str, default "-"
@@ -1347,7 +1436,10 @@ def verify_value_in_quote(model: DeedModel, *, job_id: str = "-", doc_sha256: st
     - ``fecha_constitucion``: a numeric date or year, day and month in
       digits or words (:func:`_date_supported`).
     - ``notario``: ``numero_notaria`` as digits, Spanish words or an
-      ordinal (``"DECIMO QUINTO"``).
+      ordinal (``"DECIMO QUINTO"``) in the quote; when the quote holds no
+      notary-number clause at all (only the name), a notary clause on the
+      cited page must state the number (:func:`_notary_supported`). A
+      quote whose own notary clause states another number fails.
     - ``capital_social_actual``: the integer part of ``monto_numerico``
       as a number with any thousands separator or in Spanish words.
 
@@ -1356,6 +1448,7 @@ def verify_value_in_quote(model: DeedModel, *, job_id: str = "-", doc_sha256: st
     """
     failures: list[str] = []
     checks: list[tuple[str, bool]] = []
+    notary_source: Optional[str] = None
     for name in ("numero_escritura", "fecha_constitucion", "notario", "capital_social_actual"):
         field = _field(model, name)
         if field.status is not FieldStatus.EXTRACTED or field.value is None or field.evidence is None:
@@ -1367,7 +1460,10 @@ def verify_value_in_quote(model: DeedModel, *, job_id: str = "-", doc_sha256: st
         elif name == "fecha_constitucion":
             supported = _date_supported(str(field.value), norm_quote, tokens)
         elif name == "notario":
-            supported = _number_in_quote(int(field.value.numero_notaria), norm_quote, tokens, ordinals=True)
+            page_text = None if page_texts is None else page_texts.get(field.evidence.page_number)
+            supported, notary_source = _notary_supported(
+                int(field.value.numero_notaria), norm_quote, tokens, page_text
+            )
         else:
             supported = _amount_supported(float(field.value.monto_numerico), tokens, norm_quote)
         checks.append((name, supported))
@@ -1381,7 +1477,11 @@ def verify_value_in_quote(model: DeedModel, *, job_id: str = "-", doc_sha256: st
         stage=_STAGE,
         job_id=job_id,
         doc_sha256=doc_sha256,
-        details={"fields_checked": [name for name, _ in checks], "unsupported": failures},
+        details={
+            "fields_checked": [name for name, _ in checks],
+            "unsupported": failures,
+            "notary_support": notary_source,
+        },
     )
     return failures
 
@@ -1489,5 +1589,6 @@ __all__ = [
     "verify_capital_consistency",
     "verify_grounding",
     "verify_temporal_consistency",
+    "notary_clause_numbers",
     "verify_value_in_quote",
 ]
