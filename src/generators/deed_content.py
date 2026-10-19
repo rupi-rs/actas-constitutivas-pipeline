@@ -25,11 +25,6 @@ from collections.abc import Callable
 from typing import Any, Optional, Union
 
 from src.core.registry import ACTA_CONSTITUTIVA_CRITICAL_FIELDS
-from src.providers.decision_scorer import (
-    INJECTION_QUESTION,
-    LEGIBILITY_QUESTION,
-    normalize_score,
-)
 from src.providers.interfaces import OCRRegion, OCRResult
 from src.schemas.deed_models import (
     AmendmentEvent,
@@ -92,38 +87,8 @@ ACTA_B_INK_SMUDGE_FRAGMENTS: tuple[str, ...] = ("$250,000.00", "DOSCIENTOS CINCU
 ACTA_B_NOISE_SEED: int = 20200722
 """Seed of the deterministic scan noise on Acta B page 2."""
 
-DECISIONS_SCORE_ENGINE_NAME: str = "deterministic-decisions-v1"
-"""Engine identifier recorded in the cached Decisions score answers."""
-
-SIMULATED_LEGIBILITY_THRESHOLD: float = 0.75
-"""Default page legibility threshold the simulated cache is consistent with."""
-
-SIMULATED_LEGIBILITY_PROBABILITIES: dict[tuple[str, int], tuple[float, ...]] = {
-    ("acta_b", 2): (0.04, 0.78, 0.15, 0.03),
-}
-"""Simulated OCR_LEGIBILITY_SCORE level probabilities per scanned page.
-
-Acta B page 2 carries the notarial seal over the capital amount, so most of
-the mass sits on level 1 ("Partially occluded"): score 1.17, normalized
-0.39, below the 0.75 threshold.
-"""
-
-CLEAN_LEGIBILITY_PROBABILITIES: tuple[float, ...] = (0.0, 0.01, 0.07, 0.92)
-"""Simulated legibility probabilities of a clean scanned page (no entry above)."""
-
-SIMULATED_INJECTION_PROBABILITIES: dict[str, tuple[float, ...]] = {
-    "acta_a": (0.90, 0.09, 0.01, 0.0),
-    "acta_b": (0.90, 0.09, 0.01, 0.0),
-    "acta_c": (0.72, 0.27, 0.01, 0.0),
-}
-"""Simulated PROMPT_INJECTION_RISK_SCORE level probabilities per deed.
-
-No synthetic deed contains instructions; Acta C carries more mass on level 1
-("Benign procedural language") because of its revocation and grant clauses.
-"""
-
-LEGIBILITY_ESCALATION_VERIFIER_PROBABILITY: float = 0.97
-"""Simulated Decisions predicate probability for clean critical regions on a low-legibility page."""
+CRITICAL_REGION_VERIFIER_PROBABILITY: float = 0.97
+"""Simulated Decisions predicate probability for clean critical-field regions of scanned pages."""
 
 
 class BlockStyle(str, Enum):
@@ -1382,8 +1347,9 @@ def build_verifier_responses(spec: DeedSpec) -> list[dict[str, Any]]:
     -------
     list of dict
         Acta B only: the page 2 capital clause (``p = 0.78``) and the clean
-        critical regions escalated for low page legibility (``p = 0.97``,
-        calibrated ``0.94``, so they pass without review).
+        critical-field regions of the scanned page, which are always
+        verified (``p = 0.97``, calibrated ``0.94``, so they pass without
+        review).
     """
     if spec.acta_id != "acta_b":
         return []
@@ -1395,45 +1361,22 @@ def build_verifier_responses(spec: DeedSpec) -> list[dict[str, Any]]:
             "probability": ACTA_B_VERIFIER_PROBABILITY,
         }
     ]
-    for number, region, quote in legibility_escalated_regions(spec):
+    for number, region, quote in critical_scanned_regions(spec):
         responses.append(
             {
                 "page_number": number,
                 "bbox": list(region.bbox),
                 "predicate": f'The text on page {number} reads: "{" ".join(quote.split())}"',
-                "probability": LEGIBILITY_ESCALATION_VERIFIER_PROBABILITY,
+                "probability": CRITICAL_REGION_VERIFIER_PROBABILITY,
             }
         )
     return responses
 
 
-def _low_legibility(acta_id: str, page_number: int) -> bool:
-    """Return whether a simulated scanned page is below the legibility threshold.
-
-    Parameters
-    ----------
-    acta_id : str
-        Deed identifier.
-    page_number : int
-        1-indexed page number.
-
-    Returns
-    -------
-    bool
-        ``True`` when the simulated normalized legibility is below
-        :data:`SIMULATED_LEGIBILITY_THRESHOLD`.
-    """
-    probabilities = SIMULATED_LEGIBILITY_PROBABILITIES.get(
-        (acta_id, page_number), CLEAN_LEGIBILITY_PROBABILITIES
-    )
-    score = sum(index * value for index, value in enumerate(probabilities))
-    return normalize_score(score, len(probabilities)) < SIMULATED_LEGIBILITY_THRESHOLD
-
-
-def legibility_escalated_regions(
+def critical_scanned_regions(
     spec: DeedSpec, ocr_threshold: float = 0.85
 ) -> list[tuple[int, RasterRegionSpec, str]]:
-    """List the clean regions re-read because their page has low legibility.
+    """List the clean raster regions holding critical-field evidence.
 
     Parameters
     ----------
@@ -1446,9 +1389,9 @@ def legibility_escalated_regions(
     -------
     list of tuple of (int, RasterRegionSpec, str)
         ``(page_number, region, quote)`` for every raster region at or above
-        the OCR threshold that holds the evidence of a critical field on a
-        page with low simulated legibility; ``quote`` is the first evidence
-        quote found in the region.
+        the OCR threshold that holds the evidence of a critical field;
+        ``quote`` is the first evidence quote found in the region. Regions
+        below the threshold are already re-read by Tier 1.
     """
     raw = RAW_EXTRACTION_BUILDERS[spec.acta_id]()
     found: list[tuple[int, RasterRegionSpec, str]] = []
@@ -1462,9 +1405,7 @@ def legibility_escalated_regions(
             if page_index >= len(spec.pages) or evidence.bounding_box is None:
                 continue
             page = spec.pages[page_index]
-            if not isinstance(page, RasterPageSpec) or not _low_legibility(
-                spec.acta_id, evidence.page_number
-            ):
+            if not isinstance(page, RasterPageSpec):
                 continue
             for region in page.regions:
                 if region.ocr_confidence < ocr_threshold:
@@ -1474,63 +1415,6 @@ def legibility_escalated_regions(
                 if all(item[1] is not region for item in found):
                     found.append((evidence.page_number, region, evidence.source_quote))
     return found
-
-
-def build_decision_scores(spec: DeedSpec) -> list[dict[str, Any]]:
-    """Build the cached Decisions ``score`` answers of a deed.
-
-    Parameters
-    ----------
-    spec : DeedSpec
-        Deed specification.
-
-    Returns
-    -------
-    list of dict
-        One ``PROMPT_INJECTION_RISK_SCORE`` entry per page and one
-        ``OCR_LEGIBILITY_SCORE`` entry per scanned page, each
-        ``{page_number, name, outcome, score, confidence, probabilities,
-        engine}``.
-
-    Notes
-    -----
-    These values are simulated, not measured: ``score`` is the
-    probability-weighted average of the 0-based level indices (as the
-    Decisions API defines it) and ``confidence`` is set to the largest level
-    probability. Native pages are not scored for legibility because their
-    text layer is exact.
-    """
-    entries: list[dict[str, Any]] = []
-    for number, page in enumerate(spec.pages, start=1):
-        questions: list[tuple[Any, tuple[float, ...]]] = []
-        if isinstance(page, RasterPageSpec):
-            questions.append(
-                (
-                    LEGIBILITY_QUESTION,
-                    SIMULATED_LEGIBILITY_PROBABILITIES.get(
-                        (spec.acta_id, number), CLEAN_LEGIBILITY_PROBABILITIES
-                    ),
-                )
-            )
-        questions.append((INJECTION_QUESTION, SIMULATED_INJECTION_PROBABILITIES[spec.acta_id]))
-        for question, probabilities in questions:
-            entries.append(
-                {
-                    "page_number": number,
-                    "name": question.name,
-                    "outcome": "answered",
-                    "score": round(sum(i * value for i, value in enumerate(probabilities)), 4),
-                    "confidence": max(probabilities),
-                    "probabilities": [
-                        {"value": index, "label": level.label, "probability": value}
-                        for index, (level, value) in enumerate(
-                            zip(question.levels, probabilities, strict=True)
-                        )
-                    ],
-                    "engine": DECISIONS_SCORE_ENGINE_NAME,
-                }
-            )
-    return entries
 
 
 def build_vlm_reads(spec: DeedSpec, ocr_threshold: float = 0.85) -> list[dict[str, Any]]:
@@ -1548,8 +1432,8 @@ def build_vlm_reads(spec: DeedSpec, ocr_threshold: float = 0.85) -> list[dict[st
     list of dict
         One ``{page_number, bbox, reading, legible, engine}`` entry per
         region below the threshold (the Acta B capital clause) followed by
-        one per clean region escalated for low page legibility (the Acta B
-        administration clause, read back verbatim).
+        one per clean critical-field region (the Acta B administration
+        clause, read back verbatim).
 
     Notes
     -----
@@ -1575,7 +1459,7 @@ def build_vlm_reads(spec: DeedSpec, ocr_threshold: float = 0.85) -> list[dict[st
                     "engine": VLM_ENGINE_NAME,
                 }
             )
-    for number, region, _quote in legibility_escalated_regions(spec, ocr_threshold):
+    for number, region, _quote in critical_scanned_regions(spec, ocr_threshold):
         reads.append(
             {
                 "page_number": number,

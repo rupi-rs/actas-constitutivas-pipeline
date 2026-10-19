@@ -30,13 +30,10 @@ Cache file format (``data/cache/{sha256}.json``)
     ``{"doc_sha256", "document_filename", "acta_id", "document_type",
     "model_version": "pre-verified-cache-v1", "raw_extraction",
     "ocr_pages": {"<page>": OCRResult}, "vlm_reads": [...],
-    "verifier_responses": [...], "decision_scores": [...]}``. ``vlm_reads``
-    holds one ``{page_number, bbox, reading, legible, engine}`` entry per OCR
-    region below 0.85 and per clean critical region on a low-legibility page
-    (the simulated vision re-read). ``decision_scores`` holds simulated
-    Decisions ``score`` answers ``{page_number, name, outcome, score,
-    confidence, probabilities, engine}``: ``PROMPT_INJECTION_RISK_SCORE`` for
-    every page and ``OCR_LEGIBILITY_SCORE`` for every scanned page.
+    "verifier_responses": [...]}``. ``vlm_reads`` holds one
+    ``{page_number, bbox, reading, legible, engine}`` entry per OCR region
+    below 0.85 and per clean critical-field region of a scanned page (the
+    simulated vision re-read).
     ``raw_extraction`` is a validated :class:`RawDeedExtraction` dumped
     with ``model_dump(by_alias=True, mode="json")``.
 
@@ -116,7 +113,6 @@ from src.generators.deed_content import (
     NativePageSpec,
     RasterPageSpec,
     TextBlock,
-    build_decision_scores,
     build_ground_truth_fields,
     build_ocr_result,
     build_verifier_responses,
@@ -608,7 +604,6 @@ def build_cache_payload(spec: DeedSpec, doc_sha256: str) -> dict[str, Any]:
         "ocr_pages": ocr_pages,
         "vlm_reads": build_vlm_reads(spec),
         "verifier_responses": build_verifier_responses(spec),
-        "decision_scores": build_decision_scores(spec),
     }
 
 

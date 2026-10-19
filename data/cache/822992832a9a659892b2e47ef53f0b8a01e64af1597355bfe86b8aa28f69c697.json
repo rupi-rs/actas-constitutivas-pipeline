@@ -19,8 +19,7 @@
         "vlm_reading": null,
         "vlm_legible": null,
         "verification_probability": null,
-        "crop_path": null,
-        "page_legibility_score": null
+        "crop_path": null
       },
       "requires_human_review": false,
       "review_reason": null
@@ -39,8 +38,7 @@
         "vlm_reading": null,
         "vlm_legible": null,
         "verification_probability": null,
-        "crop_path": null,
-        "page_legibility_score": null
+        "crop_path": null
       },
       "requires_human_review": false,
       "review_reason": null
@@ -59,8 +57,7 @@
         "vlm_reading": null,
         "vlm_legible": null,
         "verification_probability": null,
-        "crop_path": null,
-        "page_legibility_score": null
+        "crop_path": null
       },
       "requires_human_review": false,
       "review_reason": null
@@ -83,8 +80,7 @@
         "vlm_reading": null,
         "vlm_legible": null,
         "verification_probability": null,
-        "crop_path": null,
-        "page_legibility_score": null
+        "crop_path": null
       },
       "requires_human_review": false,
       "review_reason": null
@@ -108,8 +104,7 @@
             "vlm_reading": null,
             "vlm_legible": null,
             "verification_probability": null,
-            "crop_path": null,
-            "page_legibility_score": null
+            "crop_path": null
           }
         },
         {
@@ -129,8 +124,7 @@
             "vlm_reading": null,
             "vlm_legible": null,
             "verification_probability": null,
-            "crop_path": null,
-            "page_legibility_score": null
+            "crop_path": null
           }
         }
       ],
@@ -146,8 +140,7 @@
         "vlm_reading": null,
         "vlm_legible": null,
         "verification_probability": null,
-        "crop_path": null,
-        "page_legibility_score": null
+        "crop_path": null
       },
       "requires_human_review": false,
       "review_reason": null
@@ -171,8 +164,7 @@
             "vlm_reading": null,
             "vlm_legible": null,
             "verification_probability": null,
-            "crop_path": null,
-            "page_legibility_score": null
+            "crop_path": null
           }
         },
         {
@@ -192,8 +184,7 @@
             "vlm_reading": null,
             "vlm_legible": null,
             "verification_probability": null,
-            "crop_path": null,
-            "page_legibility_score": null
+            "crop_path": null
           }
         }
       ],
@@ -209,8 +200,7 @@
         "vlm_reading": null,
         "vlm_legible": null,
         "verification_probability": null,
-        "crop_path": null,
-        "page_legibility_score": null
+        "crop_path": null
       },
       "requires_human_review": false,
       "review_reason": null
@@ -233,8 +223,7 @@
             "vlm_reading": null,
             "vlm_legible": null,
             "verification_probability": null,
-            "crop_path": null,
-            "page_legibility_score": null
+            "crop_path": null
           }
         },
         {
@@ -253,8 +242,7 @@
             "vlm_reading": null,
             "vlm_legible": null,
             "verification_probability": null,
-            "crop_path": null,
-            "page_legibility_score": null
+            "crop_path": null
           }
         },
         {
@@ -273,8 +261,7 @@
             "vlm_reading": null,
             "vlm_legible": null,
             "verification_probability": null,
-            "crop_path": null,
-            "page_legibility_score": null
+            "crop_path": null
           }
         },
         {
@@ -293,8 +280,7 @@
             "vlm_reading": null,
             "vlm_legible": null,
             "verification_probability": null,
-            "crop_path": null,
-            "page_legibility_score": null
+            "crop_path": null
           }
         },
         {
@@ -313,8 +299,7 @@
             "vlm_reading": null,
             "vlm_legible": null,
             "verification_probability": null,
-            "crop_path": null,
-            "page_legibility_score": null
+            "crop_path": null
           }
         }
       ],
@@ -330,8 +315,7 @@
         "vlm_reading": null,
         "vlm_legible": null,
         "verification_probability": null,
-        "crop_path": null,
-        "page_legibility_score": null
+        "crop_path": null
       },
       "requires_human_review": false,
       "review_reason": null
@@ -356,8 +340,7 @@
         "vlm_reading": null,
         "vlm_legible": null,
         "verification_probability": null,
-        "crop_path": null,
-        "page_legibility_score": null
+        "crop_path": null
       },
       "requires_human_review": false,
       "review_reason": null
@@ -383,8 +366,7 @@
           "vlm_reading": null,
           "vlm_legible": null,
           "verification_probability": null,
-          "crop_path": null,
-          "page_legibility_score": null
+          "crop_path": null
         },
         "revoked_appointment_evidence": []
       }
@@ -392,67 +374,5 @@
   },
   "ocr_pages": {},
   "vlm_reads": [],
-  "verifier_responses": [],
-  "decision_scores": [
-    {
-      "page_number": 1,
-      "name": "PROMPT_INJECTION_RISK_SCORE",
-      "outcome": "answered",
-      "score": 0.11,
-      "confidence": 0.9,
-      "probabilities": [
-        {
-          "value": 0,
-          "label": "No instructions",
-          "probability": 0.9
-        },
-        {
-          "value": 1,
-          "label": "Benign procedural language",
-          "probability": 0.09
-        },
-        {
-          "value": 2,
-          "label": "Suspicious directive aimed at an automated system",
-          "probability": 0.01
-        },
-        {
-          "value": 3,
-          "label": "Explicit attempt to override instructions or force an outcome",
-          "probability": 0.0
-        }
-      ],
-      "engine": "deterministic-decisions-v1"
-    },
-    {
-      "page_number": 2,
-      "name": "PROMPT_INJECTION_RISK_SCORE",
-      "outcome": "answered",
-      "score": 0.11,
-      "confidence": 0.9,
-      "probabilities": [
-        {
-          "value": 0,
-          "label": "No instructions",
-          "probability": 0.9
-        },
-        {
-          "value": 1,
-          "label": "Benign procedural language",
-          "probability": 0.09
-        },
-        {
-          "value": 2,
-          "label": "Suspicious directive aimed at an automated system",
-          "probability": 0.01
-        },
-        {
-          "value": 3,
-          "label": "Explicit attempt to override instructions or force an outcome",
-          "probability": 0.0
-        }
-      ],
-      "engine": "deterministic-decisions-v1"
-    }
-  ]
+  "verifier_responses": []
 }
