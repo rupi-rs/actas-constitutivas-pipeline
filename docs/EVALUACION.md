@@ -25,7 +25,25 @@ Medidas adicionales:
 
 ## 2. Resultados
 
-### Ejecución determinística (caché preverificada)
+**Qué significan estas cifras.** La ejecución determinística con caché (calificación 1.000) es una prueba de regresión de la lógica determinística, no una medición de desempeño: la caché preverificada refleja el ground truth, por lo que calificarla es circular. El desempeño real proviene solo de ejecuciones completamente en vivo: `actas-cli evaluate-live --runs N` procesa cada acta con RapidOCR real, `gpt-6-luna` y el predicado de Decisions, en raíces temporales aisladas y sin caché, y escribe `results/live/live_evaluation_report.json` y `results/live/live_evaluation_summary.md`.
+
+### Resultados en vivo (3 corridas)
+
+Evaluación totalmente en vivo con `actas-cli evaluate-live --runs 3` (2026-10-19): cada corrida copia las muestras a un directorio aislado con caché vacío y procesa todo con RapidOCR 1.4.4, gpt-6-luna (extracción y relectura VLM vía Responses API) y el predicate de la Decisions API. 9 documentos procesados, 0 errores. Detalle completo en `results/live/live_evaluation_summary.md` y `results/live/live_evaluation_report.json`; salidas y bitácoras por corrida en `results/live/runs/`.
+
+| Acta | Puntaje final (media / mín / máx, desv.) | Campos correctos | Falsos positivos críticos | Tasa de acierto de evidencia | Revisión humana (esperado / marcado) | Latencia media (p50 / máx) |
+|---|---|---|---|---|---|---|
+| A (nativa) | 1.000 / 1.000 / 1.000, 0.000 | 8/8 en 3/3 corridas | 0 | 1.000 | ninguno / ninguno (3/3) | 41.0 s (36.6 / 50.0) |
+| B (escaneada con sello) | 1.000 / 1.000 / 1.000, 0.000 | 8/8 en 3/3 corridas | 0 | 1.000 | capital / capital + socios (3/3) | 101.3 s (101.2 / 102.0) |
+| C (reforma y revocación) | 1.000 / 1.000 / 1.000, 0.000 | 8/8 en 3/3 corridas | 0 | 1.000 | ninguno / ninguno (3/3) | 53.4 s (54.8 / 58.6) |
+
+Enrutamiento a revisión humana: recall 1.000 (sub-revisión 0: nunca se aprobó un campo que debía revisarse) y precisión 0.500 (sobre-revisión 3: `socios` del Acta B en 3 de 3 corridas, por su propio predicate bajo sobre la franja contigua al sello, p = 0.89, 0.58 y 0.56; el umbral 0.80 debe calibrarse con datos etiquetados). El capital del Acta B se marcó en 3 de 3 corridas por discrepancia número contra letra (el "CINCUENTA" queda bajo la tinta); en una corrida la Decisions API rechazó responder el predicate y el campo se envió a revisión con ese motivo, nunca en silencio. Juan Carlos Pérez López quedó revocado en las 3 corridas.
+
+Tokens y costo: las Actas A y C (nativas) usan una sola llamada de extracción y no llaman al VLM ni a Decisions. El Acta B usa en promedio 2 extracciones (una reextracción acotada), 3 relecturas VLM y 4.33 predicates. Decisions: 13 llamadas y 17,041 tokens de entrada en total (USD 0.0017 a USD 0.10 por millón). Responses API: 83,529 tokens de entrada y 63,875 de salida; no se asume tarifa. Alcance: 3 documentos sintéticos; mide la estabilidad y el funcionamiento con modelos reales, no la precisión esperada en producción.
+
+Antecedente exploratorio (una sola corrida, no es la evaluación de referencia): en la primera corrida completamente en vivo, 24 de 24 campos correctos, enrutamiento correcto en el Acta A y el Acta C, sobrerrevisión en el Acta B (corregida después); latencias Acta A 38.7 s, Acta B 75.3 s, Acta C 46.7 s.
+
+### Prueba de regresión con caché preverificada
 
 Resultado de `actas-cli demo` sin credenciales (archivos en [`results/`](../results/)):
 
@@ -38,9 +56,9 @@ Resultado de `actas-cli demo` sin credenciales (archivos en [`results/`](../resu
 
 Los ocho campos de los tres documentos aprueban su métrica (24 de 24). En el Acta B el motivo registrado es: `Low OCR confidence (0.72) and Decisions predicate confidence (0.56 < 0.80) due to overlapping notary seal on page 2 bbox [72.0, 410.0, 520.0, 455.0].` En el Acta C `SR. JUAN C. PEREZ LOPEZ` se cruza con `LIC. JUAN CARLOS PÉREZ LÓPEZ` con similitud 89.41 y se elimina de la lista vigente.
 
-Esta ejecución valida la lógica determinística (resolución temporal, validadores, enrutamiento y módulo de evaluación) sobre una extracción conocida. No mide la calidad de los modelos: la extracción y la verificación vienen de la caché preverificada, cuyo valor `p = 0.78` es la simulación del escenario especificado.
+Esta ejecución es una prueba de regresión de la lógica determinística (resolución temporal, validadores, enrutamiento y módulo de evaluación) sobre una extracción conocida. No mide la calidad de los modelos ni su desempeño: la extracción y la verificación vienen de la caché preverificada, cuyo valor `p = 0.78` es la simulación del escenario especificado.
 
-### Ejecución en vivo (gpt-6-luna)
+### Sondeos exploratorios en vivo (gpt-6-luna, una sola corrida)
 
 Mediciones del 2026-10-18 con `gpt-6-luna`. Extracción (Responses API) y verificación (Decisions API) en vivo; el texto OCR se sirvió desde la caché OCR determinística porque RapidOCR no estaba instalado.
 
@@ -57,9 +75,9 @@ Mediciones del 2026-10-18 con `gpt-6-luna`. Extracción (Responses API) y verifi
 
 Lectura de los resultados: el verificador real duda (y se inclina por "no") cuando la tinta efectivamente oculta las cifras, y es confiado cuando el monto es legible. Con solo el texto OCR responde con `p = 0.99`, lo que confirma que el texto OCR no debe tratarse como prueba y que el recorte de imagen es indispensable en la solicitud. La extracción se muestrea con la temperatura por defecto del modelo, por lo que la calificación puede variar entre ejecuciones; con tres documentos estas cifras no son una estimación estadística de la tasa de error.
 
-### Verificación Decisions: `test-decisions` (2026-10-19)
+### Verificación Decisions independiente: `test-decisions` (2026-10-19)
 
-`actas-cli test-decisions --live` ejecuta cuatro casos contra la API Decisions real; con `--no-live` las respuestas son simuladas y el reporte las declara (`simulated: true`). Reportes: [`results/decisions_verification_report_live.json`](../results/decisions_verification_report_live.json) y [`results/decisions_verification_report_simulated.json`](../results/decisions_verification_report_simulated.json).
+Es un comando independiente de verificación de la API Decisions; no forma parte del procesamiento de documentos. `actas-cli test-decisions --live` ejecuta cuatro casos contra la API Decisions real; con `--no-live` las respuestas son simuladas y el reporte las declara (`simulated: true`). Reportes: [`results/decisions_verification_report_live.json`](../results/decisions_verification_report_live.json) y [`results/decisions_verification_report_simulated.json`](../results/decisions_verification_report_simulated.json).
 
 | Caso | En vivo | Simulado | Veredicto esperado |
 |------|---------|----------|--------------------|
@@ -68,16 +86,16 @@ Lectura de los resultados: el verificador real duda (y se inclina por "no") cuan
 | Predicado de contradicción: representante revocado del Acta C | `p = 0.00` | `p = 0.03` | REJECTED |
 | Riesgo de inyección de instrucciones | normalizado 0.997 (coincidencias de regex `ignore_previous_instructions`, `force_approval`, `skip_human_review`) | normalizado 0.9367 | FLAGGED |
 
-Los cuatro casos en vivo usaron 1,891 tokens de entrada (unos USD 0.0002). Una solicitud de legibilidad e inyección de página completa usa unos 4.5 mil tokens de entrada (unos USD 0.00045).
+Los cuatro casos en vivo usaron 1,891 tokens de entrada (unos USD 0.0002).
 
-### Relectura VLM y Acta B completa en vivo con RapidOCR real
+### Relectura VLM y Acta B completa en vivo con RapidOCR real (corrida exploratoria, diseño anterior)
 
 Sesión en vivo, octubre de 2026, `gpt-6-luna`:
 
 - **Relectura VLM del recorte sellado:** `{"reading": "QUINTA.- El capital social es de $ MIL PESOS 00/100 M.N.).", "legible": false}`. Sobre un recorte limpio del Acta A la lectura fue exacta con `legible = true`.
-- **Hallazgo sobre el OCR real:** RapidOCR lee la página sellada del Acta B con confianza mayor o igual a 0.90 y omite en silencio `$250,000.00 (DOSCIENTOS CINCUENTA`; la confianza del Nivel 1 no detecta omisiones y el umbral de 0.85 nunca se dispara. La legibilidad normalizada de Decisions sí lo detecta: 0.33 en la página 2 del Acta B frente a 0.997 en la página 1 del Acta A, con umbral 0.75.
-- **Flujo completo:** legibilidad 0.33; la primera extracción dejó capital y `poderes` como `no_encontrado`; la relectura VLM de página completa devolvió `legible = false` con la transcripción visible; una reextracción obtuvo capital 250,000.00 con `monto_en_letra` `[ilegible] MIL PESOS 00/100 M.N.`; Decisions sobre el recorte grueso de página completa dio `p = 0.98` (frente a 0.48 con el recorte ajustado); el capital se envió a revisión por la discrepancia número frente a letra y `legible = false`.
-- **Limitación:** la fusión a página completa entrega al predicado un recorte grueso, por lo que la revisión provino de las verificaciones determinísticas y no del predicado. RapidOCR se ejercitó en vivo una sola vez; no hay una evaluación más amplia de OCR ni de relectura VLM.
+- **Hallazgo sobre el OCR real:** RapidOCR lee la página sellada del Acta B con confianza mayor o igual a 0.90 y omite en silencio `$250,000.00 (DOSCIENTOS CINCUENTA`; la confianza del Nivel 1 no detecta omisiones y el umbral de 0.85 nunca se dispara. Por eso, en páginas escaneadas, todo campo crítico pasa siempre por recorte, relectura VLM y predicado de Decisions, sin importar la confianza OCR.
+- **Flujo completo (diseño anterior, con un puntaje de legibilidad de página ya retirado):** la primera extracción dejó capital y `poderes` como `no_encontrado`; la relectura VLM de página completa devolvió `legible = false` con la transcripción visible; una reextracción obtuvo capital 250,000.00 con `monto_en_letra` `[ilegible] MIL PESOS 00/100 M.N.`; Decisions sobre el recorte grueso de página completa dio `p = 0.98` (frente a 0.48 con el recorte ajustado); el capital se envió a revisión por la discrepancia número frente a letra y `legible = false`.
+- **Limitación:** cuando el bbox de evidencia es una página completa, el predicado recibe un recorte grueso, por lo que la revisión provino de las verificaciones determinísticas y no del predicado. La cobertura en vivo se limita a las tres actas sintéticas; no hay evaluación sobre escaneos reales.
 
 ## 3. Asimetría de errores
 
@@ -96,11 +114,11 @@ El sistema no "adivina": cuando la evidencia no alcanza, conserva el valor extra
 
 | Criterio | Regla | Efecto |
 |----------|-------|--------|
-| Confianza OCR | Región de evidencia con confianza < 0.85 (en citas multilínea, el mínimo de las regiones que la cubren) | Recorte, relectura VLM y Tier 2 |
-| Legibilidad de la página | `OCR_LEGIBILITY_SCORE` normalizado < 0.75 (`PAGE_LEGIBILITY_THRESHOLD`) en una página escaneada | Los campos críticos de la página escalan a relectura VLM y predicado, aunque la confianza OCR sea alta |
-| Relectura VLM | La relectura declara `legible = false`, o falla | Revisión |
-| Relectura tardía acotada | Campo crítico requerido `no_encontrado`, o falla de valor en cita o de coherencia del capital en página escaneada | Una relectura y a lo sumo una reextracción; si no se resuelve, revisión con motivo factual |
-| Inyección de instrucciones | Prefiltro de regex (`src/pipeline/injection_guard.py`) o `PROMPT_INJECTION_RISK_SCORE` normalizado >= 0.5 (`PROMPT_INJECTION_RISK_THRESHOLD`) | `security_flags = ["prompt_injection_suspected"]`, revisión global forzada, sin aprobación automática de los campos de esa página |
+| Confianza OCR | Región de evidencia de una página escaneada con confianza < 0.85 (en citas multilínea, el mínimo de las regiones que la cubren) | Recorte, relectura VLM y Tier 2 |
+| Campo crítico en página escaneada | `fecha_constitucion`, `numero_escritura`, `notario`, `capital_social_actual`, `representantes_legales`, `poderes`, siempre | Recorte, relectura VLM y predicado, aunque la confianza OCR sea alta (RapidOCR omitió texto bajo el sello con confianza >= 0.90) |
+| Relectura VLM | La relectura de la propia región del campo declara `legible = false`, o falla. Un `legible = false` de una relectura de página completa nunca marca un campo por sí solo | Revisión del campo |
+| Ruta acotada | Campo crítico requerido `no_encontrado` en página escaneada | Una relectura VLM y a lo sumo una reextracción; si no se resuelve, revisión con motivo factual |
+| Inyección de instrucciones | Prefiltro de regex sin conexión (`src/pipeline/injection_guard.py`); no se llama a ninguna API | `security_flags = ["prompt_injection_suspected"]`, revisión global forzada, sin aprobación automática de los campos de esa página, registro de auditoría |
 | Verificación por predicado | Confianza calibrada `abs(2p - 1)` < 0.80 | Revisión |
 | Verificador no disponible | Rechazo, respuesta ausente o error de la API Decisions | Revisión con motivo explícito |
 | Grounding | La cita no aparece en la página citada (coincidencia normalizada exacta, o `partial_ratio` >= 90 con guardas de dígitos y de palabras) | Confianza topada en 0.40 y revisión; el tope no se levanta con escalamientos posteriores |

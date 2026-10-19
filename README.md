@@ -35,20 +35,21 @@ The written deliverables are in Spanish; the code, tests and this README are in 
 | Evaluation: per-field metrics, deterministic and live results, error asymmetry, abstention criteria, data needed for production, meaning of a verbalized confidence | [docs/EVALUACION.md](docs/EVALUACION.md) |
 | Code review of the `process_document` snippet and answers to the follow-up questions | [docs/CODE_REVIEW.md](docs/CODE_REVIEW.md) |
 | Test documents and ground truth | [data/samples/](data/samples/), [data/ground_truth/ground_truth.json](data/ground_truth/ground_truth.json), readable version in [docs/GROUND_TRUTH.md](docs/GROUND_TRUTH.md) |
-| Results: per-document JSON, evaluation report against the ground truth, simulated and live Decisions verification reports, and the sealed-seal crop | [results/](results/) (see [results/README.md](results/README.md)) |
+| Results: per-document JSON, regression report against the ground truth, simulated and live Decisions verification reports, the sealed-seal crop and the live evaluation aggregate | [results/](results/) (see [results/README.md](results/README.md)) |
 | Code | [src/](src/), tests in [tests/](tests/) |
 
-Regenerate the architecture PDF with `uv run python docs/build_architecture_pdf.py` (byte-reproducible, ReportLab `invariant=1`). The Decisions API check `uv run actas-cli test-decisions [--live]` runs four verification cases (clean-text predicate, Acta B sealed crop predicate with `|2p - 1|`, Acta C revoked-representative contradiction predicate, prompt-injection risk score) and writes `outputs/decisions_verification_report.json`. With `--no-live` (the default) the answers are simulated and the report says so; with `--live` they come from the real Decisions API.
+Regenerate the architecture PDF with `uv run python docs/build_architecture_pdf.py` (byte-reproducible, ReportLab `invariant=1`). The Decisions API check `uv run actas-cli test-decisions [--live]` is a standalone verification command, not part of document processing; it runs four cases (clean-text predicate, Acta B sealed crop predicate with `|2p - 1|`, Acta C revoked-representative contradiction predicate, prompt-injection risk score) and writes `outputs/decisions_verification_report.json`. With `--no-live` (the default) the answers are simulated and the report says so; with `--live` they come from the real Decisions API.
 
 ## Key capabilities
 
 - **Idempotency.** The SHA-256 of the input binary is computed on ingestion and used as the cache key (`data/cache/{sha256}.json`). The cache is consulted before any OCR or LLM call.
 - **Page-level routing.** Each page is inspected independently with PyMuPDF. A page with at least 50 clean alphanumeric characters is extracted natively (`native_pdf`, confidence 1.0). Other pages are rendered at 200 dpi and sent to the OCR provider.
 - **Image and PDF inputs.** Native, scanned and hybrid PDFs, and PNG/JPG images (one or an ordered set forming one document) are accepted; see [Inputs](#inputs).
-- **Page scores from the Decisions API.** Before extraction every page gets one batched Decisions request with two `score` questions: `OCR_LEGIBILITY_SCORE` (scanned pages, full image) and `PROMPT_INJECTION_RISK_SCORE` (page text). A normalized legibility below 0.75 escalates the critical fields of that page even when local OCR reports high confidence, because OCR engines can silently drop characters hidden under a seal. See [Tier 2, VLM re-read and page scores](#tier-2-vlm-re-read-and-page-scores).
-- **Tiered escalation with a VLM re-read.** Tier 1: OCR confidence below 0.85 on an evidence region (for multi-line quotes, the minimum over all overlapping OCR regions) crops the region (bbox plus 12 pt, 200 dpi) and re-reads it with a vision model (`gpt-6-luna`, strict schema `{reading, legible}`); a legible, differing reading patches the page text before extraction. Tier 2: the OpenAI Decisions API (`POST /v1/decisions`, model `gpt-6-luna`) answers a `predicate` question about the same crop plus the untrusted OCR reading and returns a probability `p`, mapped to a calibrated confidence `|2p - 1|`; a value below 0.80, a re-read that declares the region illegible, or a failed re-read sets `requires_human_review`. A refusal or failed verification also routes the field to human review with an explicit reason.
-- **Bounded late re-read.** If a required critical field ends up `no_encontrado`, or a value-in-quote or capital-consistency check fails on a scanned page, the pipeline runs one VLM re-read of the relevant region (or the full page) and at most one re-extraction. Anything still unresolved goes to review with a factual reason.
-- **Prompt-injection defense.** Page text is wrapped in explicit, XML-escaped `<page page_number="N">` boundaries and the system prompt instructs the model to treat any imperative text inside them as untrusted passive legal text. In addition, an offline regex pre-filter (`src/pipeline/injection_guard.py`) and the Decisions injection score (flagged at normalized risk >= 0.5) set `audit_metadata.security_flags = ["prompt_injection_suspected"]`, force global human review and prevent auto-approval of the fields whose evidence is on that page. The text is still extracted as untrusted data.
+- **Single, narrow use of the Decisions API.** `POST /v1/decisions` (model `gpt-6-luna`) is used in exactly one place: the per-field `predicate` that verifies, on the field's own crop, what the VLM re-read or the extraction produced, with the calibrated confidence `|2p - 1|` compared against 0.80. There are no page-level Decisions scores in the pipeline. Native pages never use the VLM or Decisions. See [Tier 2 and VLM re-read](#tier-2-and-vlm-re-read).
+- **Tiered escalation with a VLM re-read.** On scanned pages and images, Level 2 is triggered by an OCR region confidence below 0.85 (for multi-line quotes, the minimum over all overlapping OCR regions) or, always, by any critical field (`fecha_constitucion`, `numero_escritura`, `notario`, `capital_social_actual`, `representantes_legales`, `poderes`). The always-on rule exists because real RapidOCR reads the sealed Acta B page at confidence >= 0.90 and silently omits `$250,000.00 (DOSCIENTOS CINCUENTA`, so the confidence trigger alone never fires. Flow: crop the evidence bbox (+12 pt, 200 dpi, `outputs/crops/`), VLM re-read with `gpt-6-luna` (strict schema `{reading, legible}`), patched page text that keeps both readings, extraction, then one Decisions predicate per field (`|2p - 1|` against 0.80).
+- **Bounded path.** If a required critical field on a scanned page ends up `no_encontrado`, the pipeline runs one VLM re-read and at most one re-extraction. Anything still unresolved goes to review with a factual reason.
+- **Per-field human review.** A field is flagged only for facts about its own value: its own predicate `|2p - 1| < 0.80`, its own region read as `legible = false`, a deterministic check failure (capital number versus words, value-in-quote, grounding), a verifier or VLM failure, or a prompt-injection flag. A full-page re-read returning `legible = false` never flags a field by itself.
+- **Prompt-injection defense.** Inside the pipeline: XML-escaped `<page page_number="N">` boundaries, developer/user role separation, a strict output schema, deterministic validation and an offline regex pre-filter (`src/pipeline/injection_guard.py`). A hit sets `audit_metadata.security_flags = ["prompt_injection_suspected"]`, forces global human review, prevents auto-approval of the fields whose evidence is on that page and is written to the audit log. No API call is made for injection detection; the text is still extracted as untrusted data.
 - **Deterministic grounding check.** Every `source_quote` must exist on the page it cites (normalized exact match, or RapidFuzz `partial_ratio` >= 90). Failures degrade confidence to at most 0.40 and route the field to review. The cap survives escalation: a later verifier result never raises a grounding-failed field back above it.
 - **Grounding hardening beyond the specification.** The fuzzy path is accepted only when the multiset of digit tokens in the quote also appears in the best matching page window, and a word guard rejects altered names; otherwise an exact normalized substring is required. Without this, `partial_ratio` accepts altered amounts, dates and names (for example `$7,000,000.00` scores 98.1 against a `$1,000,000.00` page). This is a deliberate extension of the grounding rule in the specification.
 - **Value-in-quote and temporal checks.** For scalar fields (`numero_escritura`, `fecha_constitucion`, `notario`, `capital_social_actual`) the extracted value must appear in its own `source_quote`. A temporal consistency check flags amendment events dated before `fecha_constitucion`. Failures route the field to human review.
@@ -70,9 +71,9 @@ flowchart TD
     B --> C[Page inspection with PyMuPDF]
     C -->|>= 50 clean chars| D[Native text extraction]
     C -->|< 50 clean chars| E[Tier 1: local OCR with confidence and bbox]
-    E --> PS[Decisions page scores: legibility and injection risk]
-    D --> PS
-    PS --> V[VLM re-read of regions below 0.85, or of critical fields on pages below legibility 0.75]
+    E --> X[Offline regex injection pre-filter]
+    D --> X
+    X --> V[VLM re-read of regions below 0.85 or of any critical field on a scanned page]
     V --> G[LLM structured extraction: live or cache]
     D -.-> G
     G --> I[Temporal resolution]
@@ -86,7 +87,7 @@ flowchart TD
     B -.->|cache hit: OCR, VLM, extraction and verifier served from cache| C
 ```
 
-Stage order in `PipelineOrchestrator`: ingestion and hash, cache check, page inspection, Tier 1 OCR of scanned pages, Decisions page scores (legibility and injection risk, batched per page, plus the offline regex pre-filter), VLM re-read, structured extraction, temporal resolution, evidence anchoring, validation (grounding, value-in-quote, temporal consistency, capital in words), registry spec enforcement, bounded late re-read and at most one re-extraction, escalation (Tier 2 Decisions predicate), confidence routing and security review, persistence. Tier 2: the predicate verifier returns `p`, mapped to `|2p - 1|`; a value below 0.80 sets `requires_human_review`.
+Stage order in `PipelineOrchestrator`: ingestion and hash, cache check, page inspection, Tier 1 OCR of scanned pages, offline regex injection pre-filter, VLM re-read, structured extraction, temporal resolution, evidence anchoring, validation (grounding, value-in-quote, temporal consistency, capital in words), registry spec enforcement, bounded late re-read and at most one re-extraction, escalation (Tier 2 Decisions predicate), confidence routing and security review, persistence. Tier 2: the predicate verifier returns `p`, mapped to `|2p - 1|`; a value below 0.80 sets `requires_human_review`.
 
 ### Module layout
 
@@ -95,7 +96,7 @@ src/
   core/        config (Settings), exceptions, logger (PIIRedactionFilter), registry (DocumentRegistry)
   schemas/     Pydantic v2 contracts: Evidence, FieldWithEvidence, CorporateDeedOutput, RawDeedExtraction
   ingestion/   hasher (SHA-256), pdf_inspector (per-page native/OCR routing), image_loader (PNG/JPG to PDF)
-  providers/   interfaces (Base* ABCs), ocr_provider, vision_provider (VLM re-read), verifier_provider (Decisions predicate), decision_scorer (Decisions score questions), llm_provider
+  providers/   interfaces (Base* ABCs), ocr_provider, vision_provider (VLM re-read), verifier_provider (Decisions predicate), decision_scorer (Decisions score questions, used only by test-decisions), llm_provider
   pipeline/    orchestrator (PipelineOrchestrator, ProviderBundle), resolver, validators, injection_guard (regex pre-filter)
   storage/     repository (FileSystemRepository, atomic writes)
   evaluation/  evaluator (metrics, Evidence Hit Rate, critical false positives), decisions_check (test-decisions cases)
@@ -109,8 +110,8 @@ src/
 |-----------|-----------------------|
 | S - Single Responsibility | Inspection (`ingestion/pdf_inspector.py`), OCR, verifier and LLM extraction (`providers/`), temporal resolution (`pipeline/resolver.py`), validation (`pipeline/validators.py`), logging (`core/logger.py`), persistence (`storage/`) and evaluation (`evaluation/`) are separate modules. |
 | O - Open/Closed | `DocumentRegistry` in `core/registry.py` holds declarative `DocumentTypeSpec` entries (required fields, applicable fields, temporal resolution flag, prompt builder). The orchestrator enforces the spec after extraction: a required field without a value becomes `no_encontrado` with review, and a non-applicable field becomes `no_aplicable`. A new document type is added by registering a spec, without changing the orchestrator. |
-| L / I - Liskov and Interface Segregation | Lean abstractions in `providers/interfaces.py`: `BaseOCRProvider`, `BaseVerifierProvider`, `BaseLLMProvider`, `BaseStorageRepository`, plus the vision re-read and page scorer abstractions. Live and deterministic implementations are interchangeable. |
-| D - Dependency Inversion | `PipelineOrchestrator` depends only on the abstractions, grouped in a `ProviderBundle`. Concrete providers are selected by the factories `build_orchestrator`, `build_llm_provider`, `build_verifier_provider`, `build_ocr_provider` and `build_decision_scorer`. |
+| L / I - Liskov and Interface Segregation | Lean abstractions in `providers/interfaces.py`: `BaseOCRProvider`, `BaseVerifierProvider`, `BaseLLMProvider`, `BaseStorageRepository`, plus the vision re-read abstraction and the score abstraction used by `test-decisions`. Live and deterministic implementations are interchangeable. |
+| D - Dependency Inversion | `PipelineOrchestrator` depends only on the abstractions, grouped in a `ProviderBundle`. Concrete providers are selected by the factories `build_orchestrator`, `build_llm_provider`, `build_verifier_provider`, `build_ocr_provider`, `build_vision_provider` and `build_decision_scorer`. |
 
 ## Synthetic scenarios
 
@@ -155,7 +156,8 @@ uv run actas-cli generate-samples          # PDFs, ground truth and SHA-256 cach
 uv run actas-cli process-all               # process the three PDFs, write outputs/*.json
 uv run actas-cli process-all --force-refresh   # ignore existing cache entries
 uv run actas-cli process-all --document-type acta_constitutiva   # registered document type
-uv run actas-cli evaluate                  # write outputs/evaluation_report.json
+uv run actas-cli evaluate                  # write outputs/evaluation_report.json (regression check on the cache)
+uv run actas-cli evaluate-live --runs 3    # fully live runs, no cache; writes results/live/
 uv run actas-cli process-file deed.pdf     # one PDF (or: scan1.png scan2.jpg --acta-id my_acta)
 uv run actas-cli test-decisions            # four Decisions API cases, simulated answers
 uv run actas-cli test-decisions --live     # same cases against the real Decisions API
@@ -179,6 +181,8 @@ Output of `actas-cli --help`:
 │ process-file      Process one PDF or a set of images as a single document.   │
 │ evaluate          Compare outputs with the ground truth and print the        │
 │                   report.                                                    │
+│ evaluate-live     Process every sample fully live N times in isolation and   │
+│                   aggregate the evaluation.                                  │
 │ demo              Run generate-samples, process-all and evaluate end to end. │
 │ test-decisions    Run four Decisions API verification cases and write a JSON │
 │                   report.                                                    │
@@ -201,7 +205,7 @@ Representative `demo` output at the default log level (timestamps removed; long 
 [OK] demo completed
 ```
 
-Per-stage events (cache hit, page routing, Tier 1 escalation, page scores) are written to `logs/pipeline_audit.jsonl`.
+Per-stage events (cache hit, page routing, Tier 1 escalation, VLM re-read) are written to `logs/pipeline_audit.jsonl`.
 
 ### Live LLM execution
 
@@ -215,16 +219,16 @@ uv run actas-cli demo --live
 
 Structured extraction uses the Responses API with Structured Outputs: `client.responses.create(model=OPENAI_EXTRACTION_MODEL, input=[developer system prompt, user prompt], text={"format": {"type": "json_schema", "name": "raw_deed_extraction", "strict": True, "schema": ...}}, store=False)`. The schema is built from `RawDeedExtraction`, `response.output_text` is validated with `RawDeedExtraction.model_validate_json`, and an incomplete or failed response, a refusal item or schema-invalid output raises `ExtractionError`. `temperature` is sent only when `OPENAI_EXTRACTION_TEMPERATURE` is set, because `gpt-6-luna` accepts only its default.
 
-### Tier 2, VLM re-read and page scores
+### Tier 2 and VLM re-read
 
 **Provider modes.**
 
-- **Mode 1 (default): everything on OpenAI Cloud with `OPENAI_API_KEY`.** Extraction with `gpt-6-luna` (Responses API, strict schema), VLM re-read with `gpt-6-luna`, and Decisions `/v1/decisions` with `gpt-6-luna` (predicate and score).
+- **Mode 1 (default): everything on OpenAI Cloud with `OPENAI_API_KEY`.** Extraction with `gpt-6-luna` (Responses API, strict schema), VLM re-read with `gpt-6-luna`, and Decisions `/v1/decisions` with `gpt-6-luna` (field predicate only).
 - **Mode 2 (alternative when the organization cannot send documents to OpenAI).** Extraction and VLM re-read are pointed to an on-prem OpenAI-compatible server (vLLM or TGI on Red Hat OpenShift GPUs with open multimodal models such as Qwen2.5-VL or Llama) through `OPENAI_BASE_URL`, with no code change. Because `/v1/decisions` exists only on OpenAI Cloud, there are two variants: 2a sends only the small low-confidence crop (for example the capital strip) to Decisions; 2b uses no Decisions at all, so those fields go straight to human review (verifier unavailable leads to review, already implemented). Only acceptance of the base URL is implemented; the rest of Mode 2 is documented, not exercised.
 - **Mode 3: offline deterministic pre-verified cache** (the default when no key is set): `actas-cli demo`, tests and CI.
 - O-series reasoning models are not used (latency and cost, not needed for bounded reading and verification).
 
-**VLM re-read.** Tier 1 OCR regions with confidence below 0.85 are cropped (bbox plus 12 pt, 200 dpi) and re-read by `OPENAI_VISION_MODEL` (default `gpt-6-luna`) through the Responses API with the strict schema `{reading, legible}`. The OCR text is passed as untrusted, escaped context and the model is told never to guess hidden characters. A legible reading that differs from the OCR text patches the page text before extraction. The evidence keeps `ocr_reading`, `vlm_reading`, `vlm_legible`, `verification_probability` and `crop_path` (extensions beyond the specification, see [docs/SCHEMA.md](docs/SCHEMA.md)). The Decisions predicate then verifies on the same crop. A field goes to review when `|2p - 1| < 0.80`, when the VLM declares `legible = false`, or when the re-read fails; a correction confirmed at `|2p - 1| >= 0.80` is accepted (`[OK] vlm_correction_confirmed`). The deterministic cache re-read agrees with the OCR text, so Acta B keeps the review reason of the specification. Crops are written to `outputs/crops/{acta}_p{page}_{field}_bbox.png`.
+**VLM re-read.** On scanned pages and images, OCR regions with confidence below 0.85, and every critical field regardless of confidence, are cropped (bbox plus 12 pt, 200 dpi) and re-read by `OPENAI_VISION_MODEL` (default `gpt-6-luna`) through the Responses API with the strict schema `{reading, legible}`. The OCR text is passed as untrusted, escaped context and the model is told never to guess hidden characters. A legible reading that differs from the OCR text patches the page text before extraction. The evidence keeps `ocr_reading`, `vlm_reading`, `vlm_legible`, `verification_probability` and `crop_path` (extensions beyond the specification, see [docs/SCHEMA.md](docs/SCHEMA.md)). The Decisions predicate then verifies on the same crop. A field goes to review when `|2p - 1| < 0.80`, when the VLM declares `legible = false`, or when the re-read fails; a correction confirmed at `|2p - 1| >= 0.80` is accepted (`[OK] vlm_correction_confirmed`). The deterministic cache re-read agrees with the OCR text, so Acta B keeps the review reason of the specification. Crops are written to `outputs/crops/{acta}_p{page}_{field}_bbox.png`.
 
 **Tier 2 verification** uses the Decisions API (public beta, `gpt-6-luna` only):
 
@@ -247,14 +251,15 @@ client.decisions.create(
 - Pricing is $0.10 per 1M input tokens with no billed output tokens.
 - The 0.80 verifier threshold is a prototype default. Per the Decisions API guidance it should be calibrated with labeled examples according to the cost of false positives and false negatives before production use.
 
-**Page scores.** Before extraction each page gets one batched Decisions request with two `score` questions: `OCR_LEGIBILITY_SCORE` (scanned pages, full image; 0 Illegible, 1 Partially occluded, 2 Mostly legible, 3 Clean) and `PROMPT_INJECTION_RISK_SCORE` (page text; 0 No instructions, 1 Benign procedural, 2 Suspicious directive, 3 Explicit override attempt). Scores are normalized as `score / (levels - 1)`.
+**Why critical fields are always re-read.** OCR confidence cannot detect omissions. Real RapidOCR reads the sealed Acta B page at confidence >= 0.90 and silently drops `$250,000.00 (DOSCIENTOS CINCUENTA`, so the 0.85 trigger alone never fires. Every critical field on a scanned page therefore goes through the crop, the VLM re-read and the Decisions predicate.
 
-- **Why legibility matters.** Tier 1 confidence cannot detect omissions. Real RapidOCR reads the sealed Acta B page at confidence >= 0.90 and silently drops `$250,000.00 (DOSCIENTOS CINCUENTA`, so the 0.85 OCR trigger alone never fires. A normalized legibility below `PAGE_LEGIBILITY_THRESHOLD` (0.75; live Acta B page 2 = 0.33, Acta A page 1 = 0.997) escalates the critical fields (`critical_fields` of the registry spec) to the VLM re-read and the Decisions predicate regardless of OCR confidence.
-- **Bounded late re-read.** A required critical field left `no_encontrado`, or a value-in-quote or capital-consistency failure on a scanned page, triggers one VLM re-read and at most one re-extraction; if still unresolved, the field goes to review with a factual reason.
-- **Injection risk.** The offline regex pre-filter (`src/pipeline/injection_guard.py`) and a normalized injection risk >= `PROMPT_INJECTION_RISK_THRESHOLD` (0.5) set `audit_metadata.security_flags = ["prompt_injection_suspected"]`, force global review and block auto-approval of the fields on that page. The text is still extracted, as untrusted data. If the live score question is refused or fails, the regex result applies and a `prompt_injection_check_refused` or `prompt_injection_check_unavailable` flag is recorded.
-- **Cost.** One full-page legibility and injection request uses about 4.5k input tokens (about USD 0.00045).
+- **Bounded path.** A required critical field left `no_encontrado` on a scanned page triggers one VLM re-read and at most one re-extraction; if still unresolved, the field goes to review with a factual reason.
+- **Per-field review.** Review is decided only from facts about the field's own value (see Key capabilities). A full-page re-read with `legible = false` never flags a field by itself.
+- **Injection.** Handled offline by the regex pre-filter and the prompt structure; no Decisions call is involved. `actas-cli test-decisions` keeps a prompt-injection `score` case as a standalone verification of the Decisions API, not as a processing step.
 
-Measured results (`gpt-6-luna`; each row states whether it was live or simulated):
+The table below mixes exploratory probes and the standalone `test-decisions` check; none of it is part of the evaluation of record (see [Evaluation](#evaluation)).
+
+Measured results (`gpt-6-luna`; each row states whether it was live or simulated, and all are exploratory single runs):
 
 | Date | Mode | Check | Result |
 |------|------|-------|--------|
@@ -267,11 +272,11 @@ Measured results (`gpt-6-luna`; each row states whether it was live or simulated
 | 2026-10-19 | Live | `test-decisions --live`, clean-text predicate | `p = 1.00`, CONFIRMED |
 | 2026-10-19 | Live | `test-decisions --live`, Acta B sealed crop predicate | `p = 0.48`, `abs(2p - 1) = 0.04`, REVIEW |
 | 2026-10-19 | Live | `test-decisions --live`, Acta C revoked-representative predicate | `p = 0.00`, REJECTED |
-| 2026-10-19 | Live | `test-decisions --live`, prompt-injection score | normalized risk 0.997, FLAGGED (regex hits `ignore_previous_instructions`, `force_approval`, `skip_human_review`); the four cases used 1,891 input tokens in total (about USD 0.0002) |
+| 2026-10-19 | Live | `test-decisions --live` (standalone check), prompt-injection score | normalized risk 0.997, FLAGGED (regex hits `ignore_previous_instructions`, `force_approval`, `skip_human_review`); the four cases used 1,891 input tokens in total (about USD 0.0002) |
 | Live session, Oct 2026 | Live, VLM | `gpt-6-luna` re-read of the sealed Acta B crop | `{"reading": "QUINTA.- El capital social es de $ MIL PESOS 00/100 M.N.).", "legible": false}` |
 | Live session, Oct 2026 | Live, VLM | `gpt-6-luna` re-read of a clean Acta A crop | read exactly, `legible = true` |
-| Live session, Oct 2026 | Live, real RapidOCR | Full Acta B end to end | legibility 0.33; pass-1 extraction left capital and `poderes` as `no_encontrado`; full-page VLM re-read returned `legible = false` with the visible transcription; one re-extraction produced capital 250,000.00 with `monto_en_letra` `[ilegible] MIL PESOS 00/100 M.N.`; Decisions on the coarse full-page crop gave `p = 0.98`; capital was routed to review by the number-versus-words mismatch and `legible = false` |
-| (deterministic) | Simulated | `test-decisions --no-live` | clean text `p = 0.98`, sealed crop `p = 0.78` (calibrated 0.56, REVIEW), revocation predicate `p = 0.03` (REJECTED), injection score normalized 0.9367 (FLAGGED); marked `simulated: true` in the report |
+| Live session, Oct 2026 | Live, real RapidOCR | Full Acta B end to end (earlier design with a page legibility score, since removed) | pass-1 extraction left capital and `poderes` as `no_encontrado`; full-page VLM re-read returned `legible = false` with the visible transcription; one re-extraction produced capital 250,000.00 with `monto_en_letra` `[ilegible] MIL PESOS 00/100 M.N.`; Decisions on the coarse full-page crop gave `p = 0.98`; capital was routed to review by the number-versus-words mismatch and `legible = false` |
+| (deterministic) | Simulated | `test-decisions --no-live` | clean text `p = 0.98`, sealed crop `p = 0.78` (calibrated 0.56, REVIEW), revocation predicate `p = 0.03` (REJECTED), injection score normalized 0.9367 (FLAGGED); standalone check, marked `simulated: true` in the report |
 | (deterministic) | Simulated | `demo` Acta B review reason | `Low OCR confidence (0.72) and Decisions predicate confidence (0.56 < 0.80) due to overlapping notary seal on page 2 bbox [72.0, 410.0, 520.0, 455.0].` |
 
 Reading the results: the real verifier is uncertain (and leans negative) when the ink genuinely hides the digits, and the OCR reading alone makes it confident, which is why the image crop is part of the request. The cached `p = 0.78` remains the deterministic simulation of the specified scenario. In the full live Acta B run the predicate was fooled by the coarse full-page crop (0.98 against 0.48 on the tight crop); the review came from the deterministic number-versus-words check and the VLM `legible = false`, not from the predicate. Extraction is sampled at the model's default temperature, so live field scores can vary between runs; earlier runs in the same session scored 0.967 and 0.985 on Acta A before the prompt rules on canonical power types and on the regime abbreviation in `razon_social` were added. The live reports are in [results/decisions_verification_report_live.json](results/decisions_verification_report_live.json) and [results/decisions_verification_report_simulated.json](results/decisions_verification_report_simulated.json).
@@ -290,7 +295,7 @@ Live OCR requires the optional engine. When a live cache miss contains a scanned
 ### Tests and type checking
 
 ```bash
-uv run pytest -q          # 318 tests
+uv run pytest -q          # 338 tests at the time of writing
 uv run mypy src tests
 ```
 
@@ -364,12 +369,12 @@ Every field is a `FieldWithEvidence`:
 |-----------|---------|
 | `value` | The extracted value, or `null`. |
 | `status` | `extraido` (present and legible), `no_encontrado` (required by the deed type but missing or illegible), `no_aplicable` (legally inapplicable to the corporate regime). |
-| `evidence` | `page_number` (1-indexed), verbatim `source_quote`, `confidence_score`, `confidence_source` (`native_pdf`, `ocr_engine`, `decisions_predicate`, `llm_logprobs` (kept for specification compatibility; the pipeline does not produce it), `deterministic_rule`), `grounding_verified`, optional `bounding_box`, and the optional extensions `ocr_reading`, `vlm_reading`, `vlm_legible`, `verification_probability`, `crop_path`, `page_legibility_score`. |
+| `evidence` | `page_number` (1-indexed), verbatim `source_quote`, `confidence_score`, `confidence_source` (`native_pdf`, `ocr_engine`, `decisions_predicate`, `llm_logprobs` (kept for specification compatibility; the pipeline does not produce it), `deterministic_rule`), `grounding_verified`, optional `bounding_box`, and the optional extensions `ocr_reading`, `vlm_reading`, `vlm_legible`, `verification_probability`, `crop_path`. |
 | `requires_human_review` / `review_reason` | Set by escalation, grounding, resolution ambiguity or confidence routing. |
 
 List items (`socios`, `representantes_legales`, `poderes`) carry their own `evidence`. Revoked representatives and their powers are removed from the active lists; the appointment and revocation evidence is retained in `amendment_history`.
 
-Excerpt from `outputs/acta_b.json` (`capital_social_actual`, deterministic cache run; the VLM fields come from the pre-verified cache and the legibility score from the deterministic scorer):
+Excerpt from `outputs/acta_b.json` (`capital_social_actual`, deterministic cache run; the VLM fields come from the pre-verified cache):
 
 ```json
 {
@@ -392,8 +397,7 @@ Excerpt from `outputs/acta_b.json` (`capital_social_actual`, deterministic cache
     "vlm_reading": "QUINTA.- El capital social es de $250,000.00 (DOSCIENTOS CINCUENTA MIL PESOS 00/100 M.N.).",
     "vlm_legible": true,
     "verification_probability": 0.78,
-    "crop_path": "outputs/crops/acta_b_p2_capital_social_actual_bbox.png",
-    "page_legibility_score": 0.39
+    "crop_path": "outputs/crops/acta_b_p2_capital_social_actual_bbox.png"
   },
   "requires_human_review": true,
   "review_reason": "Low OCR confidence (0.72) and Decisions predicate confidence (0.56 < 0.80) due to overlapping notary seal on page 2 bbox [72.0, 410.0, 520.0, 455.0]."
@@ -454,6 +458,26 @@ Separators and original case are preserved in the masked output (`PERJ-800101-AB
 
 ## Evaluation
 
+**What the numbers mean.** The deterministic cache demo (`actas-cli demo`, overall score 1.000) is a regression test of the deterministic logic (resolution, validation, routing, scoring). It is not a performance measurement: the pre-verified cache mirrors the ground truth, so scoring it is circular. Real performance comes only from fully live runs: `actas-cli evaluate-live --runs N` processes every sample with real RapidOCR, `gpt-6-luna` and the Decisions predicate, in isolated temporary roots with no cache, and writes `results/live/live_evaluation_report.json` and `results/live/live_evaluation_summary.md`.
+
+### Live evaluation (3 runs)
+
+Fully live evaluation with `actas-cli evaluate-live --runs 3` (2026-10-19): each run copies the samples into an isolated empty-cache root and processes everything with RapidOCR 1.4.4, gpt-6-luna (extraction and VLM re-read via the Responses API) and the Decisions API predicate. 9 documents, 0 errors. Full detail in `results/live/live_evaluation_summary.md` and `results/live/live_evaluation_report.json`; per-run outputs and audit logs in `results/live/runs/`.
+
+| Acta | Final score (mean / min / max, stdev) | Fields correct | Critical FP | Evidence hit rate | Human review (expected / flagged) | Mean latency (p50 / max) |
+|---|---|---|---|---|---|---|
+| A (native) | 1.000 / 1.000 / 1.000, 0.000 | 8/8 in 3/3 runs | 0 | 1.000 | none / none (3/3) | 41.0 s (36.6 / 50.0) |
+| B (scanned, seal) | 1.000 / 1.000 / 1.000, 0.000 | 8/8 in 3/3 runs | 0 | 1.000 | capital / capital + socios (3/3) | 101.3 s (101.2 / 102.0) |
+| C (amendment, revocation) | 1.000 / 1.000 / 1.000, 0.000 | 8/8 in 3/3 runs | 0 | 1.000 | none / none (3/3) | 53.4 s (54.8 / 58.6) |
+
+Review routing: recall 1.000 (under-review 0: no field that needed review was ever auto-approved) and precision 0.500 (over-review 3: Acta B `socios` in 3 of 3 runs, from its own low predicate on the band next to the seal; the 0.80 threshold must be calibrated with labeled data). Acta B capital was flagged in 3 of 3 runs by the number-vs-words mismatch (the word "CINCUENTA" is under the ink); in one run the Decisions API refused the predicate and the field was routed to review with that reason, never silently. Juan Carlos Perez Lopez was revoked in all 3 runs.
+
+Tokens and cost: Actas A and C (native) use one extraction call and never call the VLM or Decisions. Acta B averages 2 extraction calls (one bounded re-extraction), 3 VLM re-reads and 4.33 predicates. Decisions: 13 calls, 17,041 input tokens in total (USD 0.0017 at USD 0.10 per 1M). Responses API: 83,529 input and 63,875 output tokens; no price assumed. Scope: 3 synthetic documents; this measures stability and behaviour with real models, not expected production accuracy.
+
+An earlier exploratory single live run (not the evaluation of record): 24/24 fields correct, Acta A and Acta C routed correctly, Acta B over-reviewed (fixed later); latencies Acta A 38.7 s, Acta B 75.3 s, Acta C 46.7 s.
+
+### Regression check on the cache
+
 `actas-cli evaluate` compares `outputs/{acta_id}.json` against `data/ground_truth/ground_truth.json` and writes `outputs/evaluation_report.json`.
 
 | Field | Metric | Weight |
@@ -497,16 +521,14 @@ Environment variables read by the application (see `.env.example`; `.env` is nev
 | `OPENAI_EXTRACTION_MODEL` | value of `OPENAI_MODEL`, else `gpt-6-luna` | Model for live structured extraction (Responses API). |
 | `OPENAI_MODEL` | unset | Legacy alias, used only when `OPENAI_EXTRACTION_MODEL` is unset. |
 | `OPENAI_EXTRACTION_TEMPERATURE` | unset (parameter omitted) | Optional sampling temperature for extraction. Leave unset for `gpt-6-luna`. |
-| `OPENAI_DECISIONS_MODEL` | `gpt-6-luna` | Model for the Decisions API (predicate and score questions; the only supported model). |
+| `OPENAI_DECISIONS_MODEL` | `gpt-6-luna` | Model for the Decisions API (field predicate and `test-decisions` score case; the only supported model). |
 | `OPENAI_VISION_MODEL` | `gpt-6-luna` | Vision model for the VLM re-read of low-confidence OCR regions (Responses API). |
 | `OPENAI_BASE_URL` | unset (SDK default) | Optional OpenAI-compatible endpoint for extraction and the VLM re-read (Mode 2). `/v1/decisions` is served only by OpenAI Cloud. |
-| `PAGE_LEGIBILITY_THRESHOLD` | `0.75` | Normalized `OCR_LEGIBILITY_SCORE` below which the critical fields of a scanned page are escalated. Must be in `[0, 1]`. |
-| `PROMPT_INJECTION_RISK_THRESHOLD` | `0.5` | Normalized `PROMPT_INJECTION_RISK_SCORE` at or above which a page is flagged. Must be in `[0, 1]`. |
 | `LOG_LEVEL` | `INFO` | Logging level for console and audit output. |
 | `ACTAS_PROJECT_ROOT` | repository root | Base directory for `data/`, `outputs/` and `logs/`. Set to `/app` in the container. |
 | `ACTAS_AUDIT_LOG_PATH` | `logs/pipeline_audit.jsonl` | Location of the JSON Lines audit trail. |
 
-Decision thresholds (defined in `src/core/config.py`): native character threshold 50, OCR confidence 0.85, verifier confidence 0.80, review confidence 0.80, fuzzy match 85.0, grounding partial ratio 90.0, page legibility 0.75, injection risk 0.5.
+Decision thresholds (defined in `src/core/config.py`): native character threshold 50, OCR confidence 0.85, verifier confidence 0.80, review confidence 0.80, fuzzy match 85.0, grounding partial ratio 90.0.
 
 ## Repository layout
 
@@ -546,11 +568,11 @@ Decision thresholds (defined in `src/core/config.py`): native character threshol
 ## Known limitations
 
 - Live mode needs `uv sync --extra ocr` to read scanned pages. Without it, a document with a scanned page fails with `[ERROR]` naming the missing extra; it does not degrade to a lower-quality path.
-- Tier 1 OCR confidence cannot catch omissions: an engine can drop characters hidden under a seal and still report high confidence for the rest. This is mitigated, not eliminated, by the page legibility score (threshold 0.75) and the bounded late re-read.
-- The late re-read of a whole page gives the Decisions predicate a coarse crop. In the live Acta B run the predicate answered `p = 0.98` on that crop against `p = 0.48` on the tight crop; the review then came from deterministic checks (number versus words) and the VLM `legible = false`.
-- Thresholds (OCR 0.85, verifier 0.80, legibility 0.75, injection risk 0.5, fuzzy 85) need calibration with labeled real documents; they were set on synthetic data and a handful of live probes.
+- Tier 1 OCR confidence cannot catch omissions: an engine can drop characters hidden under a seal and still report high confidence for the rest. This is mitigated, not eliminated, by always re-reading critical fields of scanned pages with the VLM and by the bounded path.
+- When the evidence bbox is a whole page, the Decisions predicate receives a coarse crop. In an earlier exploratory live Acta B run the predicate answered `p = 0.98` on such a crop against `p = 0.48` on the tight crop; the review then came from deterministic checks (number versus words) and the VLM `legible = false`.
+- Thresholds (OCR 0.85, verifier 0.80, fuzzy 85) need calibration with labeled real documents; they were set on synthetic data and a handful of live probes.
 - The Decisions API exists only on OpenAI Cloud (public beta). With an on-prem model (Mode 2) the predicate is limited to a small crop (2a) or replaced by human review (2b).
-- RapidOCR was exercised live once (full Acta B run); there is no broader live OCR evaluation.
+- Live OCR coverage is limited to the three synthetic samples; there is no evaluation on real scans.
 - The OpenShift `Deployment` models a worker shape; batch runs go through `deploy/openshift-job.yaml`. Its probes only check that the CLI loads.
 - Person names (not RFC, CURP or email) can appear in audit log details.
 
@@ -566,9 +588,9 @@ Decision thresholds (defined in `src/core/config.py`): native character threshol
 
 ## Pending work
 
-- Calibrate the thresholds (OCR 0.85, Decisions 0.80, legibility 0.75, injection risk 0.5, fuzzy 85) with labeled real documents, using reliability diagrams, ECE and Brier score and the cost of false positives and false negatives per field.
-- Broader live evaluation of local OCR (RapidOCR) and of the VLM re-read on real scans; only one live end-to-end Acta B run and two crop probes exist.
-- Region-level crops for the late full-page re-read, so the Decisions predicate receives a tight crop instead of the coarse full page.
+- Calibrate the thresholds (OCR 0.85, Decisions 0.80, fuzzy 85) with labeled real documents, using reliability diagrams, ECE and Brier score and the cost of false positives and false negatives per field.
+- Broader live evaluation of local OCR (RapidOCR) and of the VLM re-read on real scans; the multi-run `evaluate-live` aggregate is the first systematic measurement.
+- Region-level crops when the evidence bbox is a whole page, so the Decisions predicate always receives a tight crop.
 - Implementation and exercise of Mode 2 beyond base-URL acceptance (on-prem multimodal server on OpenShift GPUs, evaluated with the same metrics; variants 2a and 2b).
 - Image preprocessing for photographs and poor scans (deskew, perspective correction, denoising, rotation detection).
 - A real queue worker (HTTP 202 intake, retries, dead-letter queue) replacing the batch CLI; the OpenShift `Deployment` already models the worker shape.
@@ -583,6 +605,6 @@ Decision thresholds (defined in `src/core/config.py`): native character threshol
 - The project was built with Claude Code (Anthropic, model Opus 5.5) acting as orchestrator. It delegated modules to sub-agents: Opus 5.5 for high-risk components and independent reviews, Sonnet 5.5 for most modules, tests and documentation, and Haiku 5.5 for mechanical checks.
 - The author defined the specifications (`specs/`), approved the design decisions and reviewed the results.
 - Two independent review rounds found and fixed defects, for example revocations that failed silently, a grounding check that accepted altered numbers, and a simulated verifier that was replaced by the real OpenAI Decisions API (see below).
-- Live API probes were run against `gpt-6-luna` (Decisions predicate and score questions, VLM re-read of crops, extraction, and a full Acta B run with real RapidOCR). Their results are reported above; the deterministic cache keeps the demo reproducible without credentials.
+- Live API probes were run against `gpt-6-luna` (Decisions predicate and score questions through the standalone `test-decisions` command, VLM re-read of crops, extraction, and a full Acta B run with real RapidOCR). Their results are reported above; the deterministic cache keeps the demo reproducible without credentials.
 - An independent agent review of the verifier led to replacing a simulated verifier with the real Decisions API.
-- At runtime the pipeline uses OpenAI `gpt-6-luna` through the Responses API for structured extraction and the VLM re-read of low-confidence regions, and through the Decisions API for predicate verification and page scores. Everything else (routing, resolution, validation, evaluation, logging) is deterministic Python.
+- At runtime the pipeline uses OpenAI `gpt-6-luna` through the Responses API for structured extraction and the VLM re-read, and through the Decisions API only for the per-field predicate verification. Everything else (routing, resolution, validation, evaluation, logging) is deterministic Python.
