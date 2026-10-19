@@ -27,19 +27,21 @@ Medidas adicionales:
 
 **Qué significan estas cifras.** La ejecución determinística con caché (calificación 1.000) es una prueba de regresión de la lógica determinística, no una medición de desempeño: la caché preverificada refleja el ground truth, por lo que calificarla es circular. El desempeño real proviene solo de ejecuciones completamente en vivo: `actas-cli evaluate-live --runs N` procesa cada acta con RapidOCR real, `gpt-6-luna` y el predicado de Decisions, en raíces temporales aisladas y sin caché, y escribe `results/live/live_evaluation_report.json` y `results/live/live_evaluation_summary.md`.
 
-### Resultados en vivo (3 corridas)
+### Resultados en vivo (corrida final)
 
-Evaluación totalmente en vivo con `actas-cli evaluate-live --runs 3` (2026-10-19): cada corrida copia las muestras a un directorio aislado con caché vacío y procesa todo con RapidOCR 1.4.4, gpt-6-luna (extracción y relectura VLM vía Responses API) y el predicate de la Decisions API. 9 documentos procesados, 0 errores. Detalle completo en `results/live/live_evaluation_summary.md` y `results/live/live_evaluation_report.json`; salidas y bitácoras por corrida en `results/live/runs/`.
+Evaluación final totalmente en vivo con `actas-cli evaluate-live --runs 1` (2026-10-19, código final): las muestras se copian a un directorio aislado con caché vacío y se procesan con RapidOCR 1.4.4, gpt-6-luna (extracción y relectura VLM vía Responses API) y el predicate de la Decisions API. 3 documentos, 0 errores. Detalle en `results/live/live_evaluation_summary.md` y `results/live/live_evaluation_report.json`; salidas y bitácora en `results/live/runs/`.
 
-| Acta | Puntaje final (media / mín / máx, desv.) | Campos correctos | Falsos positivos críticos | Tasa de acierto de evidencia | Revisión humana (esperado / marcado) | Latencia media (p50 / máx) |
+| Acta | Puntaje final | Campos correctos | Falsos positivos críticos | Tasa de acierto de evidencia | Revisión humana (esperado / marcado) | Latencia |
 |---|---|---|---|---|---|---|
-| A (nativa) | 1.000 / 1.000 / 1.000, 0.000 | 8/8 en 3/3 corridas | 0 | 1.000 | ninguno / ninguno (3/3) | 41.0 s (36.6 / 50.0) |
-| B (escaneada con sello) | 1.000 / 1.000 / 1.000, 0.000 | 8/8 en 3/3 corridas | 0 | 1.000 | capital / capital + socios (3/3) | 101.3 s (101.2 / 102.0) |
-| C (reforma y revocación) | 1.000 / 1.000 / 1.000, 0.000 | 8/8 en 3/3 corridas | 0 | 1.000 | ninguno / ninguno (3/3) | 53.4 s (54.8 / 58.6) |
+| A (nativa) | 1.000 | 8/8 | 0 | 1.000 | ninguno / ninguno | 35.3 s |
+| B (escaneada con sello) | 0.800 | 7/8 (capital `no_encontrado`) | 0 | 1.000 | capital / capital | 86.0 s |
+| C (reforma y revocación) | 1.000 | 8/8 | 0 | 1.000 | ninguno / ninguno | 48.7 s |
 
-Enrutamiento a revisión humana: recall 1.000 (sub-revisión 0: nunca se aprobó un campo que debía revisarse) y precisión 0.500 (sobre-revisión 3: `socios` del Acta B en 3 de 3 corridas, por su propio predicate bajo sobre la franja contigua al sello, p = 0.89, 0.58 y 0.56; el umbral 0.80 debe calibrarse con datos etiquetados). El capital del Acta B se marcó en 3 de 3 corridas por discrepancia número contra letra (el "CINCUENTA" queda bajo la tinta); en una corrida la Decisions API rechazó responder el predicate y el campo se envió a revisión con ese motivo, nunca en silencio. Juan Carlos Pérez López quedó revocado en las 3 corridas.
+Enrutamiento a revisión humana: precisión 1.000 y recall 1.000 (sin sobre-revisión ni sub-revisión). Puntaje global 0.933. El Acta B pierde el peso del capital (0.20) porque el monto "$250,000.00" está realmente cubierto por la tinta del sello: RapidOCR lo omite, la relectura VLM responde `legible=false` ("$ MIL PESOS") y, tras una única reextracción acotada, el campo queda `no_encontrado` con revisión humana ("Required field capital_social_actual not found after VLM re-read of scanned page(s) 2 and one re-extraction"). El sistema no adivina un monto que no se ve; aprobar un monto inventado sería el error grave y no ocurrió. Juan Carlos Pérez López quedó revocado. Prueba adicional en vivo con `process-file`: el Acta A convertida en dos imágenes escaneadas se extrajo completa y sin ningún campo en revisión.
 
-Tokens y costo: las Actas A y C (nativas) usan una sola llamada de extracción y no llaman al VLM ni a Decisions. El Acta B usa en promedio 2 extracciones (una reextracción acotada), 3 relecturas VLM y 4.33 predicates. Decisions: 13 llamadas y 17,041 tokens de entrada en total (USD 0.0017 a USD 0.10 por millón). Responses API: 83,529 tokens de entrada y 63,875 de salida; no se asume tarifa. Alcance: 3 documentos sintéticos; mide la estabilidad y el funcionamiento con modelos reales, no la precisión esperada en producción.
+Tokens y costo: las Actas A y C (nativas) usan una sola llamada de extracción y no llaman al VLM ni a Decisions. El Acta B usa 2 extracciones, 2 relecturas VLM y 8 predicates (un predicate por valor: capital, cada socio, representante y poder). Decisions: 7,268 tokens de entrada (USD 0.0007 a USD 0.10 por millón). Responses API: 26,845 tokens de entrada y 18,082 de salida; no se asume tarifa.
+
+Historial (`results/live_history/three_runs_before_predicate_fix/`): 3 corridas con el código previo dieron 1.000 en las tres actas (el modelo sí completó el capital de B) pero con sobre-revisión de `socios` en 3/3 (precisión 0.500), causada por predicates de cita textual y por enviar la página OCR completa como contexto; ambos se corrigieron (predicates por valor sobre el recorte y contexto solo de la región). Alcance: documentos sintéticos; mide el funcionamiento con modelos reales, no la precisión esperada en producción.
 
 Antecedente exploratorio (una sola corrida, no es la evaluación de referencia): en la primera corrida completamente en vivo, 24 de 24 campos correctos, enrutamiento correcto en el Acta A y el Acta C, sobrerrevisión en el Acta B (corregida después); latencias Acta A 38.7 s, Acta B 75.3 s, Acta C 46.7 s.
 

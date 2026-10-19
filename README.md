@@ -9,7 +9,7 @@ Enterprise-grade prototype that ingests Mexican incorporation deeds (Actas Const
 3. [Architecture](#architecture)
 4. [Synthetic scenarios](#synthetic-scenarios)
 5. [Inputs](#inputs)
-6. [Quickstart](#quickstart)
+6. [Quickstart](#quickstart) (including [Process your own document](#process-your-own-document-live))
 7. [Docker and Docker Compose](#docker-and-docker-compose)
 8. [OpenShift deployment](#openshift-deployment)
 9. [Output contract](#output-contract)
@@ -207,15 +207,28 @@ Representative `demo` output at the default log level (timestamps removed; long 
 
 Per-stage events (cache hit, page routing, Tier 1 escalation, VLM re-read) are written to `logs/pipeline_audit.jsonl`.
 
+### Process your own document (live)
+
+```bash
+cp .env.example .env                 # set OPENAI_API_KEY (models default to gpt-6-luna)
+uv sync --extra ocr                  # installs RapidOCR; a plain `uv sync` removes it again
+uv run actas-cli process-file path/to/deed.pdf --live
+uv run actas-cli process-file page1.jpg page2.jpg --acta-id my_deed --live   # images = scanned pages, in order
+```
+
+- The result is written to `outputs/<acta_id>.json` (default `acta_id` = file name without extension). Every field carries its value, status, page, verbatim quote, confidence and review flag; the summary table and the `[REVIEW_REQUIRED]` lines are printed to the console.
+- Crops of every verified scanned region are saved in `outputs/crops/` for the human reviewer.
+- The run is idempotent: processing the same bytes again is a cache hit with no API calls (`--force-refresh` forces a new live run).
+- Native PDFs never reach the VLM or Decisions; scanned pages and images go through OCR, the VLM re-read of critical fields and the Decisions predicate.
+- Without `--live`, a document that is not in the cache fails cleanly with `CacheMissError`.
+
 ### Live LLM execution
 
 ```bash
-cp .env.example .env            # then set OPENAI_API_KEY
-uv run actas-cli process-all --live
-uv run actas-cli demo --live
+uv run actas-cli evaluate-live --runs 3   # the real measurement: samples processed fully live, no cache
 ```
 
-`--live` uses the OpenAI providers only on a cache miss. The SDK is configured with `max_retries=0` and a 60 second timeout so that only the `tenacity` policy retries transient errors (connection, timeout, rate limit, server error; three attempts with exponential backoff).
+`--live` uses the OpenAI providers only on a cache miss. The three sample deeds ship with pre-verified cache entries, so `process-all --live` or `demo --live` on the samples replays the cache and does not measure the models; use `evaluate-live`, which copies the samples into isolated empty-cache roots, or `process-file ... --live` on a new document. The SDK is configured with `max_retries=0` and a 60 second timeout so that only the `tenacity` policy retries transient errors (connection, timeout, rate limit, server error; three attempts with exponential backoff).
 
 Structured extraction uses the Responses API with Structured Outputs: `client.responses.create(model=OPENAI_EXTRACTION_MODEL, input=[developer system prompt, user prompt], text={"format": {"type": "json_schema", "name": "raw_deed_extraction", "strict": True, "schema": ...}}, store=False)`. The schema is built from `RawDeedExtraction`, `response.output_text` is validated with `RawDeedExtraction.model_validate_json`, and an incomplete or failed response, a refusal item or schema-invalid output raises `ExtractionError`. `temperature` is sent only when `OPENAI_EXTRACTION_TEMPERATURE` is set, because `gpt-6-luna` accepts only its default.
 
@@ -304,6 +317,8 @@ uv run mypy src tests
 ```bash
 uv sync --extra ocr     # installs rapidocr-onnxruntime
 ```
+
+Required for every live run that touches a scanned page or image (`process-file --live`, `evaluate-live`). Keep using `uv sync --extra ocr`: a plain `uv sync` uninstalls the extra.
 
 ## Docker and Docker Compose
 
@@ -460,19 +475,21 @@ Separators and original case are preserved in the masked output (`PERJ-800101-AB
 
 **What the numbers mean.** The deterministic cache demo (`actas-cli demo`, overall score 1.000) is a regression test of the deterministic logic (resolution, validation, routing, scoring). It is not a performance measurement: the pre-verified cache mirrors the ground truth, so scoring it is circular. Real performance comes only from fully live runs: `actas-cli evaluate-live --runs N` processes every sample with real RapidOCR, `gpt-6-luna` and the Decisions predicate, in isolated temporary roots with no cache, and writes `results/live/live_evaluation_report.json` and `results/live/live_evaluation_summary.md`.
 
-### Live evaluation (3 runs)
+### Live evaluation (final run)
 
-Fully live evaluation with `actas-cli evaluate-live --runs 3` (2026-10-19): each run copies the samples into an isolated empty-cache root and processes everything with RapidOCR 1.4.4, gpt-6-luna (extraction and VLM re-read via the Responses API) and the Decisions API predicate. 9 documents, 0 errors. Full detail in `results/live/live_evaluation_summary.md` and `results/live/live_evaluation_report.json`; per-run outputs and audit logs in `results/live/runs/`.
+Final fully live evaluation with `actas-cli evaluate-live --runs 1` (2026-10-19, final code): the samples are copied into an isolated empty-cache root and processed with RapidOCR 1.4.4, gpt-6-luna (extraction and VLM re-read via the Responses API) and the Decisions API predicate. 3 documents, 0 errors. Detail in `results/live/live_evaluation_summary.md` and `results/live/live_evaluation_report.json`; outputs and audit log in `results/live/runs/`.
 
-| Acta | Final score (mean / min / max, stdev) | Fields correct | Critical FP | Evidence hit rate | Human review (expected / flagged) | Mean latency (p50 / max) |
+| Acta | Final score | Fields correct | Critical FP | Evidence hit rate | Human review (expected / flagged) | Latency |
 |---|---|---|---|---|---|---|
-| A (native) | 1.000 / 1.000 / 1.000, 0.000 | 8/8 in 3/3 runs | 0 | 1.000 | none / none (3/3) | 41.0 s (36.6 / 50.0) |
-| B (scanned, seal) | 1.000 / 1.000 / 1.000, 0.000 | 8/8 in 3/3 runs | 0 | 1.000 | capital / capital + socios (3/3) | 101.3 s (101.2 / 102.0) |
-| C (amendment, revocation) | 1.000 / 1.000 / 1.000, 0.000 | 8/8 in 3/3 runs | 0 | 1.000 | none / none (3/3) | 53.4 s (54.8 / 58.6) |
+| A (native) | 1.000 | 8/8 | 0 | 1.000 | none / none | 35.3 s |
+| B (scanned, seal) | 0.800 | 7/8 (capital `no_encontrado`) | 0 | 1.000 | capital / capital | 86.0 s |
+| C (amendment, revocation) | 1.000 | 8/8 | 0 | 1.000 | none / none | 48.7 s |
 
-Review routing: recall 1.000 (under-review 0: no field that needed review was ever auto-approved) and precision 0.500 (over-review 3: Acta B `socios` in 3 of 3 runs, from its own low predicate on the band next to the seal; the 0.80 threshold must be calibrated with labeled data). Acta B capital was flagged in 3 of 3 runs by the number-vs-words mismatch (the word "CINCUENTA" is under the ink); in one run the Decisions API refused the predicate and the field was routed to review with that reason, never silently. Juan Carlos Perez Lopez was revoked in all 3 runs.
+Review routing: precision 1.000 and recall 1.000 (no over-review, no under-review). Overall score 0.933. Acta B loses the capital weight (0.20) because "$250,000.00" is genuinely covered by the seal ink: RapidOCR omits it, the VLM re-read answers `legible=false` ("$ MIL PESOS") and, after one bounded re-extraction, the field stays `no_encontrado` and goes to human review. The pipeline does not guess an amount it cannot see; approving an invented amount would be the serious error and did not happen. Juan Carlos Perez Lopez was revoked. Extra live check with `process-file`: Acta A rendered as two scanned images was fully extracted with no field sent to review.
 
-Tokens and cost: Actas A and C (native) use one extraction call and never call the VLM or Decisions. Acta B averages 2 extraction calls (one bounded re-extraction), 3 VLM re-reads and 4.33 predicates. Decisions: 13 calls, 17,041 input tokens in total (USD 0.0017 at USD 0.10 per 1M). Responses API: 83,529 input and 63,875 output tokens; no price assumed. Scope: 3 synthetic documents; this measures stability and behaviour with real models, not expected production accuracy.
+Tokens and cost: Actas A and C (native) use one extraction call and never call the VLM or Decisions. Acta B uses 2 extraction calls, 2 VLM re-reads and 8 predicates (one value-based predicate per capital, shareholder, representative and power). Decisions: 7,268 input tokens (USD 0.0007 at USD 0.10 per 1M). Responses API: 26,845 input and 18,082 output tokens; no price assumed.
+
+History (`results/live_history/three_runs_before_predicate_fix/`): 3 runs with the previous code scored 1.000 on all three actas (the model did fill in Acta B capital) but over-reviewed `socios` in 3/3 runs (precision 0.500), caused by verbatim-quote predicates and by sending the whole OCR page as context; both were fixed (value-based predicates on the crop, region-only context). Scope: synthetic documents; this measures behaviour with real models, not expected production accuracy.
 
 An earlier exploratory single live run (not the evaluation of record): 24/24 fields correct, Acta A and Acta C routed correctly, Acta B over-reviewed (fixed later); latencies Acta A 38.7 s, Acta B 75.3 s, Acta C 46.7 s.
 
