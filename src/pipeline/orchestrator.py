@@ -2632,22 +2632,22 @@ class PipelineOrchestrator:
         -----
         Live runs showed that asking whether a crop reads a quote verbatim
         fails on clean scans (quotes longer than the crop, ISO dates versus
-        dates in words, accents), so predicates ask about the extracted value.
+        dates in words, accents), so predicates state what the crop shows about
+        the extracted value, with no page numbers or terms absent from the crop.
         """
-        page = evidence.page_number
         value = wrapper.value if wrapper is not None else None
         if name == _CAPITAL_FIELD and value is not None:
-            return f"The capital social amount on page {page} equals ${float(value.monto_numerico):,.2f} MXN"
+            return f"The image shows the capital social amount ${float(value.monto_numerico):,.2f} MXN"
         if name == "fecha_constitucion" and isinstance(value, str):
-            return f"The visible text on page {page} states the incorporation date {_date_in_words(value)} ({value})"
+            return f"The image shows the date {_date_in_words(value)}"
         if name == "numero_escritura" and isinstance(value, str):
-            return f"The visible text on page {page} states the public deed (escritura) number {value}"
+            return f"The image shows the instrument or deed number {value}"
         if name == "razon_social" and isinstance(value, str):
-            return f'The visible text on page {page} names the company "{value}"'
+            return f'The image shows the company name "{value}"'
         if name == "notario" and value is not None:
             return (
-                f"The visible text on page {page} names {value.nombre} as the notary of "
-                f"notary office number {value.numero_notaria}"
+                f"The image shows the notary {value.nombre} and notary office number "
+                f"{value.numero_notaria}"
             )
         item = next(
             (entry for entry in value if getattr(entry, "evidence", None) is evidence),
@@ -2655,16 +2655,16 @@ class PipelineOrchestrator:
         ) if isinstance(value, list) else None
         if name == "socios" and item is not None:
             return (
-                f"The visible text on page {page} lists {item.nombre} as a shareholder "
-                f"with {item.acciones} shares or social parts ({item.porcentaje:g}%)"
+                f"The image shows the shareholder {item.nombre} with {item.acciones} shares "
+                f"or social parts ({item.porcentaje:g}%)"
             )
         if name == "representantes_legales" and item is not None:
-            return f"The visible text on page {page} appoints {item.nombre} as {item.cargo}"
+            return f"The image shows {item.nombre} appointed as {item.cargo}"
         if name == "poderes" and item is not None:
-            return f"The visible text on page {page} grants {item.otorgado_a} a {item.tipo_poder}"
+            return f"The image shows {item.otorgado_a} granted a {item.tipo_poder}"
         quote = " ".join(evidence.source_quote.split())[:_PREDICATE_QUOTE_LIMIT]
         return (
-            f"The visible text on page {page} states the substance of this passage "
+            f"The image shows the substance of this passage "
             f'(ignore accents, punctuation and line breaks): "{quote}"'
         )
 
@@ -2797,7 +2797,8 @@ class PipelineOrchestrator:
                         context.doc_sha256,
                         evidence.page_number,
                         predicate,
-                        context.page_texts[evidence.page_number],
+                        # Region text only: the whole OCR page measurably degraded live answers
+                        evidence.ocr_reading or "",
                         bbox,
                         image_png=crop,
                     )
