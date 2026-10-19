@@ -8,7 +8,8 @@ metadata:
     app.kubernetes.io/name: actas-pipeline
     app.kubernetes.io/part-of: corporate-document-automation
 data:
-  OPENAI_MODEL: "gpt-4o-2024-08-06"
+  OPENAI_EXTRACTION_MODEL: "gpt-6-luna"
+  OPENAI_DECISIONS_MODEL: "gpt-6-luna"
   LOG_LEVEL: "INFO"
 ---
 apiVersion: apps/v1

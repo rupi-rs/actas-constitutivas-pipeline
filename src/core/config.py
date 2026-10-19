@@ -12,19 +12,29 @@ Recognised environment variables:
 - ``ACTAS_PROJECT_ROOT``: overrides the project root directory.
 - ``ACTAS_AUDIT_LOG_PATH``: overrides the JSON Lines audit trail location.
 - ``OPENAI_API_KEY``: enables live LLM / verifier execution when non-empty.
-- ``OPENAI_MODEL``: OpenAI model identifier (default ``gpt-4o-2024-08-06``).
+- ``OPENAI_EXTRACTION_MODEL``: model for live structured extraction through the
+  Responses API; falls back to ``OPENAI_MODEL`` and then ``gpt-6-luna``.
+- ``OPENAI_MODEL``: legacy alias used when ``OPENAI_EXTRACTION_MODEL`` is unset.
+- ``OPENAI_EXTRACTION_TEMPERATURE``: optional sampling temperature for live
+  extraction; when unset the parameter is omitted from the request.
+- ``OPENAI_DECISIONS_MODEL``: model for the Tier 2 Decisions API verifier
+  (default ``gpt-6-luna``, the only model the Decisions API supports).
 """
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
-DEFAULT_OPENAI_MODEL: str = "gpt-4o-2024-08-06"
-"""Default OpenAI model used for structured extraction and verification."""
+DEFAULT_OPENAI_MODEL: str = "gpt-6-luna"
+"""Default OpenAI model used for structured extraction."""
+
+DEFAULT_DECISIONS_MODEL: str = "gpt-6-luna"
+"""Default model for the Decisions API (the only model it supports)."""
 
 
 def _default_project_root() -> Path:
@@ -48,8 +58,12 @@ class Settings:
         Repository root; every relative path is resolved against it.
     openai_api_key : str or None
         OpenAI credential. ``None`` selects the deterministic cache providers.
-    openai_model : str
-        OpenAI model identifier.
+    openai_extraction_model : str
+        Model used for live structured extraction (Responses API).
+    openai_decisions_model : str
+        Model used by the Tier 2 Decisions API verifier.
+    openai_extraction_temperature : float or None
+        Sampling temperature for live extraction; ``None`` omits the parameter.
     audit_log_override : Path or None
         Explicit audit log location replacing ``logs/pipeline_audit.jsonl``.
     native_char_threshold : int
@@ -73,7 +87,9 @@ class Settings:
 
     project_root: Path = field(default_factory=_default_project_root)
     openai_api_key: Optional[str] = None
-    openai_model: str = DEFAULT_OPENAI_MODEL
+    openai_extraction_model: str = DEFAULT_OPENAI_MODEL
+    openai_decisions_model: str = DEFAULT_DECISIONS_MODEL
+    openai_extraction_temperature: Optional[float] = None
     audit_log_override: Optional[Path] = None
     native_char_threshold: int = 50
     ocr_confidence_threshold: float = 0.85
@@ -81,6 +97,11 @@ class Settings:
     review_confidence_threshold: float = 0.80
     fuzzy_match_threshold: float = 85.0
     grounding_partial_ratio_threshold: float = 90.0
+
+    @property
+    def openai_model(self) -> str:
+        """str: Backward-compatible alias of ``openai_extraction_model``."""
+        return self.openai_extraction_model
 
     @property
     def data_dir(self) -> Path:
@@ -140,6 +161,36 @@ class Settings:
         return self.cache_dir / f"{doc_sha256}.json"
 
 
+def _parse_optional_float(name: str) -> Optional[float]:
+    """Read an optional float environment variable.
+
+    Parameters
+    ----------
+    name : str
+        Environment variable name.
+
+    Returns
+    -------
+    float or None
+        Parsed value, or ``None`` when unset or empty.
+
+    Raises
+    ------
+    ValueError
+        If the value is set but is not a finite number.
+    """
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a number, got {raw!r}") from exc
+    if not math.isfinite(value):
+        raise ValueError(f"{name} must be a finite number, got {raw!r}")
+    return value
+
+
 def load_settings_from_env() -> Settings:
     """Build a fresh :class:`Settings` instance from environment variables.
 
@@ -148,6 +199,11 @@ def load_settings_from_env() -> Settings:
     Settings
         Settings reflecting the current process environment.
 
+    Raises
+    ------
+    ValueError
+        If ``OPENAI_EXTRACTION_TEMPERATURE`` is set to a non-numeric value.
+
     Notes
     -----
     Empty-string environment values are treated as unset.
@@ -155,11 +211,17 @@ def load_settings_from_env() -> Settings:
     root_env = os.environ.get("ACTAS_PROJECT_ROOT", "").strip()
     audit_env = os.environ.get("ACTAS_AUDIT_LOG_PATH", "").strip()
     api_key = os.environ.get("OPENAI_API_KEY", "").strip()
-    model = os.environ.get("OPENAI_MODEL", "").strip()
+    extraction_model = (
+        os.environ.get("OPENAI_EXTRACTION_MODEL", "").strip()
+        or os.environ.get("OPENAI_MODEL", "").strip()
+    )
+    decisions_model = os.environ.get("OPENAI_DECISIONS_MODEL", "").strip()
     return Settings(
         project_root=Path(root_env).resolve() if root_env else _default_project_root(),
         openai_api_key=api_key or None,
-        openai_model=model or DEFAULT_OPENAI_MODEL,
+        openai_extraction_model=extraction_model or DEFAULT_OPENAI_MODEL,
+        openai_decisions_model=decisions_model or DEFAULT_DECISIONS_MODEL,
+        openai_extraction_temperature=_parse_optional_float("OPENAI_EXTRACTION_TEMPERATURE"),
         audit_log_override=Path(audit_env) if audit_env else None,
     )
 
