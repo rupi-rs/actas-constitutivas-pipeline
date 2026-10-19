@@ -19,6 +19,11 @@ Recognised environment variables:
   extraction; when unset the parameter is omitted from the request.
 - ``OPENAI_DECISIONS_MODEL``: model for the Tier 2 Decisions API verifier
   (default ``gpt-6-luna``, the only model the Decisions API supports).
+- ``OPENAI_VISION_MODEL``: vision model that re-reads low-confidence OCR regions
+  through the Responses API (default ``gpt-6-luna``).
+- ``OPENAI_BASE_URL``: optional OpenAI-compatible endpoint for extraction and the
+  VLM re-read (and the Decisions verifier when set; ``/v1/decisions`` is only
+  served by OpenAI Cloud today). Unset keeps the SDK default.
 """
 
 from __future__ import annotations
@@ -35,6 +40,9 @@ DEFAULT_OPENAI_MODEL: str = "gpt-6-luna"
 
 DEFAULT_DECISIONS_MODEL: str = "gpt-6-luna"
 """Default model for the Decisions API (the only model it supports)."""
+
+DEFAULT_VISION_MODEL: str = "gpt-6-luna"
+"""Default vision model for the VLM re-read of low-confidence OCR regions."""
 
 
 def _default_project_root() -> Path:
@@ -62,6 +70,11 @@ class Settings:
         Model used for live structured extraction (Responses API).
     openai_decisions_model : str
         Model used by the Tier 2 Decisions API verifier.
+    openai_vision_model : str
+        Vision model that re-reads low-confidence OCR regions (Responses API).
+    openai_base_url : str or None
+        Optional API base URL passed to ``openai.OpenAI(base_url=...)``;
+        ``None`` keeps the SDK default endpoint.
     openai_extraction_temperature : float or None
         Sampling temperature for live extraction; ``None`` omits the parameter.
     audit_log_override : Path or None
@@ -69,7 +82,8 @@ class Settings:
     native_char_threshold : int
         Minimum clean alphanumeric characters for a page to be treated as native.
     ocr_confidence_threshold : float
-        OCR region confidence below which Escalation Tier 2 is triggered.
+        OCR region confidence below which the region is re-read by the vision
+        model and the evidence it supports is escalated to Tier 2.
     verifier_confidence_threshold : float
         Calibrated predicate confidence below which human review is required.
     review_confidence_threshold : float
@@ -89,6 +103,8 @@ class Settings:
     openai_api_key: Optional[str] = None
     openai_extraction_model: str = DEFAULT_OPENAI_MODEL
     openai_decisions_model: str = DEFAULT_DECISIONS_MODEL
+    openai_vision_model: str = DEFAULT_VISION_MODEL
+    openai_base_url: Optional[str] = None
     openai_extraction_temperature: Optional[float] = None
     audit_log_override: Optional[Path] = None
     native_char_threshold: int = 50
@@ -216,11 +232,15 @@ def load_settings_from_env() -> Settings:
         or os.environ.get("OPENAI_MODEL", "").strip()
     )
     decisions_model = os.environ.get("OPENAI_DECISIONS_MODEL", "").strip()
+    vision_model = os.environ.get("OPENAI_VISION_MODEL", "").strip()
+    base_url = os.environ.get("OPENAI_BASE_URL", "").strip()
     return Settings(
         project_root=Path(root_env).resolve() if root_env else _default_project_root(),
         openai_api_key=api_key or None,
         openai_extraction_model=extraction_model or DEFAULT_OPENAI_MODEL,
         openai_decisions_model=decisions_model or DEFAULT_DECISIONS_MODEL,
+        openai_vision_model=vision_model or DEFAULT_VISION_MODEL,
+        openai_base_url=base_url or None,
         openai_extraction_temperature=_parse_optional_float("OPENAI_EXTRACTION_TEMPERATURE"),
         audit_log_override=Path(audit_env) if audit_env else None,
     )

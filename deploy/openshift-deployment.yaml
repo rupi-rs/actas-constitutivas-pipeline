@@ -10,6 +10,8 @@ metadata:
 data:
   OPENAI_EXTRACTION_MODEL: "gpt-6-luna"
   OPENAI_DECISIONS_MODEL: "gpt-6-luna"
+  OPENAI_VISION_MODEL: "gpt-6-luna"
+  OPENAI_BASE_URL: ""
   LOG_LEVEL: "INFO"
 ---
 apiVersion: apps/v1

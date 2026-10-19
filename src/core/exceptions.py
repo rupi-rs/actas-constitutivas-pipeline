@@ -63,6 +63,10 @@ class VerifierError(PipelineError):
     """Raised when the predicate verifier (Escalation Tier 2) fails."""
 
 
+class VisionReadError(PipelineError):
+    """Raised when the VLM re-read of a low-confidence region fails or is refused."""
+
+
 class ExtractionError(PipelineError):
     """Raised when structured LLM extraction fails or returns invalid data."""
 
