@@ -5,8 +5,9 @@ without network access. It matches common English and Spanish phrases that
 address an automated system instead of recording a legal act (for example
 "ignore previous instructions", "ignora las instrucciones anteriores",
 "mark this document as approved", "system prompt"). A match flags the
-document for human review; the Decisions ``PROMPT_INJECTION_RISK_SCORE``
-question complements it for paraphrased attempts.
+document for human review and blocks the auto-approval of the fields on
+that page. No API call is made: the processing path uses the Decisions API
+only for the predicate that verifies vision re-reads.
 
 Notes
 -----
