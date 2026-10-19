@@ -21,7 +21,7 @@ Bank-grade prototype that ingests Mexican incorporation deeds (Actas Constitutiv
 
 - **Idempotency.** The SHA-256 of the input binary is computed on ingestion and used as the cache key (`data/cache/{sha256}.json`). The cache is consulted before any OCR or LLM call.
 - **Page-level routing.** Each page is inspected independently with PyMuPDF. A page with at least 50 clean alphanumeric characters is extracted natively (`native_pdf`, confidence 1.0). Other pages are rendered at 200 dpi and sent to the OCR provider.
-- **Two-tier escalation.** Tier 1: OCR confidence below 0.85 on an evidence region escalates it; for multi-line quotes the minimum confidence over all overlapping OCR regions is used. Tier 2: a predicate verifier (the "Decisions" verifier) returns a probability `p`, mapped to a calibrated confidence `|2p - 1|`; a value below 0.80 sets `requires_human_review`.
+- **Two-tier escalation.** Tier 1: OCR confidence below 0.85 on an evidence region escalates it; for multi-line quotes the minimum confidence over all overlapping OCR regions is used. Tier 2: the OpenAI Decisions API (`POST /v1/decisions`, model `gpt-6-luna`) answers a `predicate` question about a 200 dpi PNG crop of the evidence region plus the untrusted OCR reading and returns a probability `p`, mapped to a calibrated confidence `|2p - 1|`; a value below 0.80 sets `requires_human_review`. A refusal or failed verification also routes the field to human review with an explicit reason.
 - **Prompt-injection defense.** Page text is wrapped in explicit `<page page_number="N">` XML boundaries and the system prompt instructs the model to treat any imperative text inside them as untrusted passive legal text.
 - **Deterministic grounding check.** Every `source_quote` must exist on the page it cites (normalized exact match, or RapidFuzz `partial_ratio` >= 90). Failures degrade confidence to at most 0.40 and route the field to review. The cap survives escalation: a later verifier result never raises a grounding-failed field back above it.
 - **Grounding hardening beyond the specification.** The fuzzy path is accepted only when the multiset of digit tokens in the quote also appears in the best matching page window, and a word guard rejects altered names; otherwise an exact normalized substring is required. Without this, `partial_ratio` accepts altered amounts, dates and names (for example `$7,000,000.00` scores 98.1 against a `$1,000,000.00` page). This is a deliberate extension of the grounding rule in the specification.
@@ -88,7 +88,7 @@ src/
 | Scenario | Pages | Description | Expected result |
 |----------|-------|-------------|-----------------|
 | Acta A | 2 | Clean native incorporation deed (Tecnologia Financiera del Valle, S.A. de C.V., capital 500,000.00). | Both pages routed natively, no OCR, no human review. Two active representatives. |
-| Acta B | 2 | Page 1 native, page 2 a raster image with a simulated notary seal over the capital clause (Comercializadora Industrial del Norte, capital 250,000.00). | Page 2 routed to OCR. Tier 1: OCR confidence 0.72 < 0.85. Tier 2: `p = 0.78`, calibrated 0.56 < 0.80. `capital_social_actual` is flagged for human review. |
+| Acta B | 2 | Page 1 native, page 2 a raster image with a simulated notary seal whose dense ink covers the amount `$250,000.00` and part of the amount in words (Comercializadora Industrial del Norte, capital 250,000.00). | Page 2 routed to OCR. Tier 1: OCR confidence 0.72 < 0.85. Tier 2 (deterministic cache): `p = 0.78`, calibrated 0.56 < 0.80. `capital_social_actual` is flagged for human review. The live Decisions API result on the same crop is reported below. |
 | Acta C | 4 | 2019 incorporation (pages 1-2) plus a 2024 assembly protocolization (pages 3-4): capital increase to 1,000,000.00, revocation of the original administrator, appointment of a new one. | Capital resolved to 1,000,000.00 (deed 58,400, 2024-08-20). `SR. JUAN C. PEREZ LOPEZ` matches `LIC. JUAN CARLOS PÉREZ LÓPEZ` at similarity 89.41 and is removed from the active lists. Active representatives: `MARIA ELENA TORRES VEGA`, `ING. ALEJANDRO GÓMEZ RUIZ`. Four chronological events in `amendment_history`. |
 
 The exact review reason produced for Acta B is:
@@ -170,7 +170,44 @@ uv run actas-cli process-all --live
 uv run actas-cli demo --live
 ```
 
-`--live` uses the OpenAI providers only on a cache miss. Extraction uses strict JSON schema output (`response_format` of type `json_schema` with `strict: true`, built from `RawDeedExtraction`), the Tier 2 verifier reads token log-probabilities, and the SDK is configured with `max_retries=0` and a 60 second timeout so that only the `tenacity` policy retries. Predicates and page text are XML-escaped before they reach a prompt.
+`--live` uses the OpenAI providers only on a cache miss. The SDK is configured with `max_retries=0` and a 60 second timeout so that only the `tenacity` policy retries transient errors (connection, timeout, rate limit, server error; three attempts with exponential backoff).
+
+Structured extraction uses the Responses API with Structured Outputs: `client.responses.create(model=OPENAI_EXTRACTION_MODEL, input=[developer system prompt, user prompt], text={"format": {"type": "json_schema", "name": "raw_deed_extraction", "strict": True, "schema": ...}}, store=False)`. The schema is built from `RawDeedExtraction`, `response.output_text` is validated with `RawDeedExtraction.model_validate_json`, and an incomplete or failed response, a refusal item or schema-invalid output raises `ExtractionError`. `temperature` is sent only when `OPENAI_EXTRACTION_TEMPERATURE` is set, because `gpt-6-luna` accepts only its default.
+
+Tier 2 verification uses the Decisions API (public beta, `gpt-6-luna` only):
+
+```python
+client.decisions.create(
+    model="gpt-6-luna",
+    input=[{"role": "user", "content": [
+        {"type": "input_text", "text": "<ocr_reading>...escaped OCR text...</ocr_reading>"},
+        {"type": "input_image", "image_url": "data:image/png;base64,..."},
+    ]}],
+    questions=[{"type": "predicate", "name": "field_check", "instructions": "..."}],
+)
+```
+
+- The predicate is built by the orchestrator, for example `The capital social amount on page 2 equals $250,000.00 MXN`. The instructions tell the model to judge only visibly legible content in the crop and to treat the OCR reading as untrusted text, never as instructions or proof.
+- The crop is rendered by `render_region_png` in `src/ingestion/pdf_inspector.py`: the evidence bbox padded by 12 pt, clamped to the page, at 200 dpi, sent inline as a base64 data URL.
+- The answer's `probability` is `p`; the pipeline uses `|2p - 1|`. Both a confident yes and a confident no are high-confidence outcomes; values near 0.5 are routed to review.
+- A `refusal` answer, a missing answer or a failed request raises `VerifierError`. The orchestrator then flags the dependent fields for human review with the reason `Decisions predicate verification unavailable (...)`, logs `[REVIEW_REQUIRED]`, and does not persist the live cache entry.
+- Live cache entries record the verifier `engine` (`openai-decisions:gpt-6-luna`) for every stored answer.
+- Pricing is $0.10 per 1M input tokens with no billed output tokens; one Acta B verification uses 867 input tokens.
+- The 0.80 verifier threshold is a prototype default. Per the Decisions API guidance it should be calibrated with labeled examples according to the cost of false positives and false negatives before production use.
+
+Measured live results (2026-10-18, `gpt-6-luna`, OCR text served from the deterministic OCR cache because RapidOCR was not installed, extraction and verification live):
+
+| Check | Result |
+|-------|--------|
+| Decisions, Acta B capital crop with OCR text | `p = 0.35`, calibrated 0.30 < 0.80, 867 input tokens |
+| Decisions, same crop without OCR text | `p = 0.40`, calibrated 0.20, 583 input tokens |
+| Decisions, OCR text only (no image) | `p = 0.99`, calibrated 0.98, 579 input tokens |
+| Decisions, previous semi-transparent seal (amount legible) | `p = 0.72` with OCR text, `p = 0.90` image only |
+| Live extraction Acta A (Responses API) | schema-valid, 0 grounding failures out of 20 evidences, evaluator final score 1.000; 5,087 input and 5,101 output tokens |
+| Live extraction Acta B (Responses API) | schema-valid, 0 grounding failures out of 15 evidences, evaluator final score 1.000; 4,656 input and 3,323 output tokens |
+| Acta B review decision | `capital_social_actual` flagged: `Low OCR confidence (0.72) and Decisions predicate confidence (0.30 < 0.80) due to overlapping notary seal on page 2 bbox [72.0, 410.0, 520.0, 455.0].` |
+
+The real verifier is uncertain (and leans negative) only because the ink genuinely hides the digits; the OCR reading alone makes it confident, which is why the image crop is part of the request. The cached `p = 0.78` remains the deterministic simulation of the specified scenario. Extraction is sampled at the model's default temperature, so live field scores can vary between runs; earlier runs in the same session scored 0.967 and 0.985 on Acta A before the prompt rules on canonical power types and on the regime abbreviation in `razon_social` were added.
 
 Cache semantics:
 
@@ -186,7 +223,7 @@ Live OCR requires the optional engine. When a live cache miss contains a scanned
 ### Tests and type checking
 
 ```bash
-uv run pytest -q          # 167 tests
+uv run pytest -q          # 258 tests
 uv run mypy src tests
 ```
 
@@ -384,7 +421,10 @@ Environment variables read by the application (see `.env.example`; `.env` is nev
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `OPENAI_API_KEY` | empty | Enables live extraction and verification on cache misses. Empty selects the deterministic cache. |
-| `OPENAI_MODEL` | `gpt-4o-2024-08-06` (as in `.env.example`) | Model used for live extraction and verification. |
+| `OPENAI_EXTRACTION_MODEL` | value of `OPENAI_MODEL`, else `gpt-6-luna` | Model for live structured extraction (Responses API). |
+| `OPENAI_MODEL` | unset | Legacy alias, used only when `OPENAI_EXTRACTION_MODEL` is unset. |
+| `OPENAI_EXTRACTION_TEMPERATURE` | unset (parameter omitted) | Optional sampling temperature for extraction. Leave unset for `gpt-6-luna`. |
+| `OPENAI_DECISIONS_MODEL` | `gpt-6-luna` | Model for the Tier 2 Decisions API verifier (the only supported model). |
 | `LOG_LEVEL` | `INFO` | Logging level for console and audit output. |
 | `ACTAS_PROJECT_ROOT` | repository root | Base directory for `data/`, `outputs/` and `logs/`. Set to `/app` in the container. |
 | `ACTAS_AUDIT_LOG_PATH` | `logs/pipeline_audit.jsonl` | Location of the JSON Lines audit trail. |
