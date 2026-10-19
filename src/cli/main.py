@@ -1,7 +1,7 @@
 """Command line presenter for the corporate deed automation pipeline.
 
-Exposes ``generate-samples``, ``process-all``, ``process-file``, ``evaluate``
-and ``demo``.
+Exposes ``generate-samples``, ``process-all``, ``process-file``, ``evaluate``,
+``demo`` and ``test-decisions``.
 This module is the only place where results are rendered for humans; all
 runtime events inside the pipeline go through the structured logger.
 """
@@ -372,6 +372,12 @@ def _render_results(results: list[ProcessingResult]) -> None:
                 continue
             for tag, message in _revocation_lines(result.acta_id, event, reason):
                 _say(tag, message)
+        if result.security_flags:
+            _say(
+                StatusTag.REVIEW_REQUIRED,
+                f"{result.acta_id}: security flags {', '.join(result.security_flags)}; "
+                "document routed to human review",
+            )
         for name in result.review_fields:
             field = getattr(output, name)
             _say(
@@ -563,6 +569,73 @@ def _evaluate(settings: Settings) -> bool:
     return True
 
 
+def _test_decisions(settings: Settings, live: bool) -> bool:
+    """Run the four Decisions API verification cases and render them.
+
+    Parameters
+    ----------
+    settings : Settings
+        Runtime settings.
+    live : bool
+        ``True`` calls the real Decisions API; ``False`` replays the
+        simulated answers.
+
+    Returns
+    -------
+    bool
+        ``True`` when every case ran without a request error.
+    """
+    from src.evaluation.decisions_check import run_decision_checks, write_decision_report
+
+    try:
+        report = run_decision_checks(settings, live=live)
+        path = write_decision_report(report, settings.outputs_dir)
+    except PipelineError as exc:
+        _say(StatusTag.ERROR, f"{type(exc).__name__}: {exc.message}")
+        return False
+    table = _table(f"Decisions API verification ({report.mode}, {report.engine})")
+    for column in ("Case", "Type", "Input", "Raw result", "Calibrated", "Threshold", "Verdict"):
+        table.add_column(column)
+    for case in report.cases:
+        if "probability" in case.raw:
+            raw = f"p={case.raw['probability']:.4f}"
+        elif "score" in case.raw:
+            raw = f"score={case.raw['score']:.4f}"
+        else:
+            raw = ", ".join(f"{key}={value}" for key, value in case.raw.items())
+        calibrated = (
+            "-"
+            if case.calibrated is None
+            else f"{'|2p-1|' if case.question_type == 'predicate' else 'norm'}={case.calibrated:.4f}"
+        )
+        rule = "flag if >=" if case.question_type == "score" else "review if <"
+        table.add_row(
+            _cell(case.case),
+            _cell(case.question_type),
+            _cell(case.input_summary),
+            _cell(raw),
+            _cell(calibrated),
+            _cell(f"{rule} {case.threshold:.2f}"),
+            _cell(case.verdict, "" if case.matches_expectation else "yellow"),
+        )
+    _console.print(table)
+    for case in report.cases:
+        if case.notes:
+            _say(StatusTag.INFO, f"{case.case}: {case.notes}")
+        tag = StatusTag.OK if case.matches_expectation else StatusTag.WARN
+        _say(tag, f"{case.case}: verdict {case.verdict} (expected {case.expected_verdict})")
+    if report.mode != "live":
+        _say(StatusTag.INFO, "simulated answers (no API call); run with --live for real Decisions results")
+    else:
+        _say(
+            StatusTag.INFO,
+            f"{report.total_input_tokens} Decisions input tokens "
+            f"(about USD {report.to_json()['estimated_input_cost_usd']:.6f})",
+        )
+    _say(StatusTag.INFO, f"report written to {path.parent.name}/{path.name}")
+    return all(case.verdict != "ERROR" for case in report.cases)
+
+
 @app.command("generate-samples")
 def generate_samples(ctx: typer.Context) -> None:
     """Generate sample PDFs, ground truth and caches.
@@ -717,6 +790,31 @@ def demo(
             _say(StatusTag.ERROR, f"demo aborted at step: {step}")
             raise typer.Exit(code=1)
     _say(StatusTag.OK, "demo completed")
+
+
+@app.command("test-decisions")
+def test_decisions(
+    ctx: typer.Context,
+    live: bool = typer.Option(
+        False, "--live/--no-live", help="Call the real Decisions API instead of simulated answers."
+    ),
+) -> None:
+    """Run four Decisions API verification cases and write a JSON report.
+
+    Parameters
+    ----------
+    ctx : typer.Context
+        Typer context carrying the settings.
+    live : bool
+        Whether to call the real Decisions API.
+
+    Raises
+    ------
+    typer.Exit
+        With code 1 when a case fails to run.
+    """
+    if not _test_decisions(_settings(ctx), live):
+        raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":
