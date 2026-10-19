@@ -238,6 +238,8 @@ class OpenAIDecisionsVerifier(BaseVerifierProvider):
 
     Notes
     -----
+    ``OPENAI_BASE_URL`` is honoured only when set; ``/v1/decisions`` is
+    served by OpenAI Cloud only today, so a compatible gateway must proxy it.
     The Decisions API returns ``probability`` directly for predicate
     questions; no token log probabilities are involved. A ``refusal`` answer
     raises :class:`VerifierError` so the orchestrator routes the field to
@@ -261,7 +263,10 @@ class OpenAIDecisionsVerifier(BaseVerifierProvider):
             raise VerifierError("OPENAI_API_KEY is required for the live verifier")
         self._model = settings.openai_decisions_model
         self._client = openai.OpenAI(
-            api_key=settings.openai_api_key, max_retries=0, timeout=_REQUEST_TIMEOUT_SECONDS
+            api_key=settings.openai_api_key,
+            max_retries=0,
+            timeout=_REQUEST_TIMEOUT_SECONDS,
+            base_url=settings.openai_base_url,
         )
         self.engine_name = f"openai-decisions:{self._model}"
         self.last_input_tokens: Optional[int] = None

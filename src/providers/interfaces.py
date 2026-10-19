@@ -3,7 +3,8 @@
 High-level pipeline components depend only on these interfaces
 (Dependency Inversion); concrete OCR, verifier, LLM and storage
 implementations live in sibling modules and may be live or
-deterministic (cache-backed).
+deterministic (cache-backed). The vision reader re-reads low-confidence OCR
+regions from their image crop before structured extraction.
 """
 
 from __future__ import annotations
@@ -131,6 +132,38 @@ class VerifierResult(BaseModel):
     engine: str
 
 
+class VisionReadResult(BaseModel):
+    """Vision-model re-read of one low-confidence OCR region.
+
+    Parameters
+    ----------
+    page_number : int
+        1-indexed page number.
+    bbox : BoundingBox
+        Region location in PDF points (the crop adds 12 pt padding).
+    reading : str or None
+        Text the model judged visibly legible; ``None`` when it declined.
+    legible : bool
+        ``False`` when any character needed to read the region is occluded.
+    engine : str
+        Reader identifier (for example ``"openai-vision:gpt-6-luna"``).
+    input_tokens : int or None, default None
+        Prompt tokens reported by a live reader.
+    output_tokens : int or None, default None
+        Completion tokens reported by a live reader.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    page_number: int = Field(ge=1)
+    bbox: BoundingBox
+    reading: Optional[str] = None
+    legible: bool
+    engine: str
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+
+
 class BaseOCRProvider(ABC):
     """Abstract OCR provider for scanned pages."""
 
@@ -200,6 +233,45 @@ class BaseVerifierProvider(ABC):
         ------
         src.core.exceptions.VerifierError
             If verification fails.
+        """
+
+
+class BaseVisionReader(ABC):
+    """Abstract vision reader that re-reads a low-confidence region crop."""
+
+    @abstractmethod
+    def reread_region(
+        self,
+        doc_sha256: str,
+        page_number: int,
+        bbox: BoundingBox,
+        image_png: Optional[bytes],
+        ocr_text: str,
+    ) -> VisionReadResult:
+        """Transcribe the visibly legible text of a region crop.
+
+        Parameters
+        ----------
+        doc_sha256 : str
+            Document hash (used by cache-backed readers).
+        page_number : int
+            1-indexed page number.
+        bbox : BoundingBox
+            Region location in PDF points.
+        image_png : bytes or None
+            PNG crop of the padded region; live readers require it.
+        ocr_text : str
+            Untrusted Tier 1 OCR reading of the region (context only).
+
+        Returns
+        -------
+        VisionReadResult
+            Reading and legibility verdict.
+
+        Raises
+        ------
+        src.core.exceptions.VisionReadError
+            If the read fails, is refused or returns invalid data.
         """
 
 
@@ -288,6 +360,28 @@ class BaseStorageRepository(ABC):
         -------
         Path
             Written file path.
+
+        Raises
+        ------
+        src.core.exceptions.StorageError
+            If writing fails.
+        """
+
+    @abstractmethod
+    def save_crop(self, crop_name: str, image_png: bytes) -> str:
+        """Persist a region crop sent to the vision reader and verifier.
+
+        Parameters
+        ----------
+        crop_name : str
+            Safe file name of the crop.
+        image_png : bytes
+            PNG crop.
+
+        Returns
+        -------
+        str
+            Location of the crop relative to the project root.
 
         Raises
         ------

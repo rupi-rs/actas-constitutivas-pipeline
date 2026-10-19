@@ -245,7 +245,10 @@ class OpenAILLMProvider(BaseLLMProvider):
         self._temperature = settings.openai_extraction_temperature
         self._registry = registry
         self._client = openai.OpenAI(
-            api_key=settings.openai_api_key, max_retries=0, timeout=_REQUEST_TIMEOUT_SECONDS
+            api_key=settings.openai_api_key,
+            max_retries=0,
+            timeout=_REQUEST_TIMEOUT_SECONDS,
+            base_url=settings.openai_base_url,
         )
 
     @retry(
