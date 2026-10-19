@@ -3008,8 +3008,12 @@ class PipelineOrchestrator:
         -----
         Review is decided per field from facts about its own value: the
         calibrated confidence is below ``verifier_confidence_threshold``,
-        the VLM judged the field's own region not fully legible, or the VLM
-        re-read of that region failed. A ``legible=false`` verdict on a box
+        the VLM judged the field's own region not fully legible and Decisions
+        did not confirm the value either, or the VLM re-read of that region
+        failed. Decisions has the final visual word: a ``legible=false`` own
+        region whose value Decisions confirms at or above the threshold is not
+        flagged, because live runs showed the VLM marks cleanly scanned crops
+        illegible when a line is cut at the crop edge. A ``legible=false`` verdict on a box
         that covers the whole text area of the page (:meth:`_is_page_level`)
         is not a fact about one field and never flags it by itself. A VLM correction that
         disagrees with OCR is accepted without review only when Decisions
@@ -3058,7 +3062,9 @@ class PipelineOrchestrator:
                     + _summarize_reading(evidence.vlm_reading)
                     + ") and Decisions did not confirm the VLM correction."
                 )
-        if illegible:
+        # An empty VLM reading always counts; a non-empty illegible reading needs low Decisions too
+        unread = any(not (item.result.reading or "").strip() for item in illegible if item.result)
+        if illegible and (low_decisions or unread):
             parts.append(
                 "VLM re-read judged the region not fully legible (legible=false, reading "
                 + _summarize_reading(" ".join(item.result.reading or "" for item in illegible if item.result) or None)

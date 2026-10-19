@@ -648,7 +648,7 @@ def test_live_acta_b_over_review_regression(
 def test_own_region_illegible_flags_only_that_field(
     settings: Settings, sample_paths: dict[str, Path]
 ) -> None:
-    """``legible=false`` on the administration region flags representatives and powers only.
+    """``legible=false`` with a non-empty reading is overridden by a confident Decisions predicate.
 
     Parameters
     ----------
@@ -665,9 +665,36 @@ def test_own_region_illegible_flags_only_that_field(
     result = build_orchestrator(settings, live=False).process_document(sample_paths["acta_b"])
     for name in ("representantes_legales", "poderes"):
         field = getattr(result.output, name)
+        assert field.requires_human_review is False
+    assert result.output.socios.requires_human_review is False
+    assert result.output.capital_social_actual.review_reason == SPEC_REASON
+
+
+def test_own_region_illegible_with_low_predicate_flags_field(
+    settings: Settings, sample_paths: dict[str, Path]
+) -> None:
+    """``legible=false`` plus a predicate below the threshold flags representatives and powers.
+
+    Parameters
+    ----------
+    settings : object
+        Isolated workspace settings.
+    sample_paths : object
+        Generated sample PDF paths keyed by deed identifier.
+    """
+    path, payload = _cache(settings, sample_paths["acta_b"])
+    for entry in payload["vlm_reads"]:
+        if entry["bbox"] == ADMIN_BBOX:
+            entry["legible"] = False
+    for entry in payload["verifier_responses"]:
+        if entry["bbox"] == ADMIN_BBOX:
+            entry["probability"] = 0.7
+    _write(path, payload)
+    result = build_orchestrator(settings, live=False).process_document(sample_paths["acta_b"])
+    for name in ("representantes_legales", "poderes"):
+        field = getattr(result.output, name)
         assert field.requires_human_review is True
         assert "legible=false" in (field.review_reason or "")
-        assert "p=0.97" in (field.review_reason or "")
     assert result.output.socios.requires_human_review is False
     assert result.output.capital_social_actual.review_reason == SPEC_REASON
 
