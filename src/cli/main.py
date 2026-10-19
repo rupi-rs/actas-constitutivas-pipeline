@@ -1,7 +1,7 @@
 """Command line presenter for the corporate deed automation pipeline.
 
 Exposes ``generate-samples``, ``process-all``, ``process-file``, ``evaluate``,
-``demo`` and ``test-decisions``.
+``evaluate-live``, ``demo`` and ``test-decisions``.
 This module is the only place where results are rendered for humans; all
 runtime events inside the pipeline go through the structured logger.
 """
@@ -13,7 +13,7 @@ import os
 import shutil
 from collections.abc import Callable
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import typer
 from rich import box
@@ -636,6 +636,178 @@ def _test_decisions(settings: Settings, live: bool) -> bool:
     return all(case.verdict != "ERROR" for case in report.cases)
 
 
+def _render_live_report(report: dict[str, Any]) -> None:
+    """Render the aggregates of a live evaluation as Rich tables.
+
+    Parameters
+    ----------
+    report : dict of str to Any
+        Output of :func:`src.evaluation.live_evaluation.run_live_evaluation`.
+    """
+    aggregates = report["aggregates"]
+    overall = aggregates["overall"]
+
+    def number(value: Any, digits: int = 3) -> str:
+        """Format a metric cell.
+
+        Parameters
+        ----------
+        value : Any
+            Metric value or ``None``.
+        digits : int, default 3
+            Decimals for floats.
+
+        Returns
+        -------
+        str
+            ``"-"`` for ``None``, fixed decimals for floats, ``str`` otherwise.
+        """
+        if value is None:
+            return "-"
+        return f"{value:.{digits}f}" if isinstance(value, float) else str(value)
+
+    for acta_id, data in aggregates["per_acta"].items():
+        fields = _table(f"Live field metrics: {acta_id} ({data['runs_ok']}/{data['runs']} runs ok)")
+        for column in ("Field", "Mean", "Min", "Max", "Pass rate"):
+            fields.add_column(column, justify="left" if column == "Field" else "right")
+        for name, stats in data["fields"].items():
+            fields.add_row(
+                _cell(name),
+                _cell(number(stats["mean"])),
+                _cell(number(stats["min"])),
+                _cell(number(stats["max"])),
+                _cell(number(stats["pass_rate"])),
+            )
+        _console.print(fields)
+    summary = _table("Live evaluation summary")
+    for column in (
+        "Acta",
+        "Final mean",
+        "Min",
+        "Max",
+        "Stdev",
+        "Crit FP",
+        "Over-review",
+        "Under-review",
+        "Latency p50 (ms)",
+        "Decisions USD",
+    ):
+        summary.add_column(column)
+    for acta_id, data in aggregates["per_acta"].items():
+        score, routing = data["final_score"], data["routing"]
+        summary.add_row(
+            _cell(acta_id),
+            _cell(number(score["mean"])),
+            _cell(number(score["min"])),
+            _cell(number(score["max"])),
+            _cell(number(score["stdev"])),
+            _cell(data["critical_false_positives"]),
+            _cell(routing["over_review"], "yellow" if routing["over_review"] else ""),
+            _cell(routing["under_review"], "red" if routing["under_review"] else ""),
+            _cell(number(data["latency"]["p50_ms"], 1)),
+            _cell(f"{data['decisions_cost_usd']['total']:.6f}"),
+        )
+    _console.print(summary)
+    tokens = _table("Live tokens per stage (totals)")
+    for column in ("Stage", "Calls", "Input tokens", "Output tokens"):
+        tokens.add_column(column)
+    for stage, stats in overall["tokens"].items():
+        tokens.add_row(
+            _cell(stage),
+            _cell(stats["total_calls"]),
+            _cell(stats["total_input_tokens"]),
+            _cell(stats["total_output_tokens"]),
+        )
+    _console.print(tokens)
+    routing = overall["routing"]
+    _say(
+        StatusTag.INFO,
+        f"overall final score mean {number(overall['final_score']['mean'])} "
+        f"(min {number(overall['final_score']['min'])}, max {number(overall['final_score']['max'])}, "
+        f"stdev {number(overall['final_score']['stdev'])}); evidence hit rate mean "
+        f"{number(overall['evidence_hit_rate']['mean'])}",
+    )
+    _say(
+        StatusTag.INFO,
+        f"review routing precision {number(routing['precision'])}, recall {number(routing['recall'])}, "
+        f"over-review {routing['over_review']}, under-review {routing['under_review']}",
+    )
+    if routing["under_review"]:
+        _say(StatusTag.WARN, f"under-review detected: {routing['under_review_fields']}")
+    decisions = overall["decisions_api"]
+    responses = overall["responses_api_tokens"]
+    _say(
+        StatusTag.INFO,
+        f"Decisions API {decisions['input_tokens']} input tokens, USD {decisions['cost_usd']:.6f}; "
+        f"Responses API {responses['input_tokens']} input / {responses['output_tokens']} output "
+        "tokens (no price assumed)",
+    )
+    if overall["critical_false_positives_total"]:
+        _say(
+            StatusTag.CRITICAL_RISK,
+            f"{overall['critical_false_positives_total']} critical false positives across runs",
+        )
+    else:
+        _say(StatusTag.OK, "no critical false positives across runs")
+    for acta_id, data in aggregates["per_acta"].items():
+        for error in data["errors"]:
+            _say(StatusTag.ERROR, f"{acta_id}: {error}")
+
+
+def _evaluate_live(settings: Settings, runs: int, output_dir: Path) -> bool:
+    """Run the repeated live evaluation and render its aggregates.
+
+    Parameters
+    ----------
+    settings : Settings
+        Runtime settings.
+    runs : int
+        Number of independent live runs.
+    output_dir : Path
+        Report directory; relative paths are resolved against the project root.
+
+    Returns
+    -------
+    bool
+        ``True`` when every run completed and the reports were written.
+    """
+    from src.evaluation.live_evaluation import LiveRun, run_live_evaluation, write_live_reports
+
+    target = output_dir if output_dir.is_absolute() else settings.project_root / output_dir
+
+    def progress(run: LiveRun) -> None:
+        """Report one completed run.
+
+        Parameters
+        ----------
+        run : LiveRun
+            Completed run.
+        """
+        scores = ", ".join(f"{doc.acta_id} {doc.final_score:.3f}" for doc in run.documents)
+        failed = [doc.acta_id for doc in run.documents if doc.error is not None]
+        _say(
+            StatusTag.WARN if failed else StatusTag.OK,
+            f"live run {run.run_index} completed: {scores}; OCR engines {', '.join(run.ocr_engines) or 'none'}"
+            + (f"; failed: {', '.join(failed)}" if failed else ""),
+        )
+
+    try:
+        report = run_live_evaluation(
+            settings,
+            runs,
+            target,
+            log_level=resolve_log_level(os.environ.get("LOG_LEVEL")),
+            on_run=progress,
+        )
+        json_path, markdown_path = write_live_reports(report, target)
+    except PipelineError as exc:
+        _say(StatusTag.ERROR, f"{type(exc).__name__}: {exc.message}")
+        return False
+    _render_live_report(report)
+    _say(StatusTag.INFO, f"reports written to {json_path} and {markdown_path}")
+    return int(report["aggregates"]["overall"]["documents_failed"]) == 0
+
+
 @app.command("generate-samples")
 def generate_samples(ctx: typer.Context) -> None:
     """Generate sample PDFs, ground truth and caches.
@@ -749,6 +921,35 @@ def evaluate(ctx: typer.Context) -> None:
         With code 1 on failure.
     """
     if not _evaluate(_settings(ctx)):
+        raise typer.Exit(code=1)
+
+
+@app.command("evaluate-live")
+def evaluate_live(
+    ctx: typer.Context,
+    runs: int = typer.Option(3, "--runs", min=1, help="Number of independent fully live runs."),
+    output_dir: Path = typer.Option(
+        Path("results/live"), "--output-dir", help="Directory for the live evaluation reports."
+    ),
+) -> None:
+    """Process every sample fully live N times in isolation and aggregate the evaluation.
+
+    Parameters
+    ----------
+    ctx : typer.Context
+        Typer context carrying the settings.
+    runs : int
+        Number of independent runs, each with an empty cache.
+    output_dir : Path
+        Report directory (never inside ``data/cache`` or ``outputs/``).
+
+    Raises
+    ------
+    typer.Exit
+        With code 1 when a prerequisite is missing, a run fails or a
+        document could not be processed.
+    """
+    if not _evaluate_live(_settings(ctx), runs, output_dir):
         raise typer.Exit(code=1)
 
 
