@@ -1,15 +1,23 @@
 """End-to-end pipeline orchestration for corporate deed processing.
 
-The orchestrator wires ingestion, page-level inspection, OCR, structured
-extraction, temporal resolution, deterministic validation, two-tier
-confidence escalation and persistence. It depends only on provider
+The orchestrator wires ingestion, page-level inspection, OCR, the VLM
+re-read of low-confidence OCR regions, structured extraction, temporal
+resolution, deterministic validation, two-tier confidence escalation and
+persistence. It depends only on provider
 abstractions; concrete implementations are chosen by
 :func:`build_orchestrator`.
 
 Notes
 -----
+Scanned pages follow a read-correct-extract-verify order: Tier 1 local OCR
+reads the page; every region below ``ocr_confidence_threshold`` is cropped
+and re-read by a vision model; a legible, non-empty re-read that differs
+from the OCR text replaces it in the page text; structured extraction then
+runs on the corrected text; finally the Tier 2 Decisions predicate verifies
+the extracted value on the same crop for evidence inside a re-read region.
+
 Idempotency follows the SHA-256 cache contract: when ``data/cache/{sha}.json``
-exists, OCR text, raw LLM extraction and verifier answers are served from it
+exists, OCR text, VLM re-reads, raw LLM extraction and verifier answers are served from it
 by deterministic providers and no live call is made, even in live mode.
 A cache miss in live mode runs the live providers and persists a new cache
 payload so that the next run is idempotent.
@@ -39,7 +47,9 @@ from src.core.exceptions import (
     OCRError,
     PDFInspectionError,
     PipelineError,
+    StorageError,
     VerifierError,
+    VisionReadError,
 )
 from src.core.logger import StatusTag, get_logger, log_event
 from src.core.registry import ACTA_CONSTITUTIVA, DocumentRegistry, DocumentTypeSpec
@@ -60,11 +70,13 @@ from src.providers.interfaces import (
     BaseOCRProvider,
     BaseStorageRepository,
     BaseVerifierProvider,
+    BaseVisionReader,
     OCRRegion,
     OCRResult,
     PageContent,
     PageSource,
     VerifierResult,
+    VisionReadResult,
 )
 from src.providers.llm_provider import (
     SYSTEM_PROMPT_SHA256,
@@ -76,6 +88,7 @@ from src.providers.verifier_provider import (
     DeterministicVerifierProvider,
     build_verifier_provider,
 )
+from src.providers.vision_provider import DeterministicVLMProvider, build_vision_provider
 from src.schemas.deed_models import (
     AmendmentType,
     AuditMetadata,
@@ -98,6 +111,7 @@ _CAPITAL_FIELD: str = "capital_social_actual"
 _PRE_VERIFIED_MODEL_VERSION: str = "pre-verified-cache-v1"
 _MIN_REGION_OVERLAP_CHARS: int = 3
 _REGION_SEPARATOR: str = " "
+_READING_SUMMARY_LIMIT: int = 120
 
 
 class DocumentProcessingError(PipelineError):
@@ -112,7 +126,7 @@ class DocumentProcessingError(PipelineError):
 
 @dataclass(frozen=True)
 class ProviderBundle:
-    """A coherent set of OCR, verifier and LLM providers.
+    """A coherent set of OCR, vision, verifier and LLM providers.
 
     Parameters
     ----------
@@ -122,11 +136,16 @@ class ProviderBundle:
         Escalation Tier 2 predicate verifier.
     llm : BaseLLMProvider
         Structured extraction provider.
+    vision : BaseVisionReader or None, default None
+        Vision reader for low-confidence OCR regions. ``None`` disables the
+        re-read (logged as WARN per page); evidence then goes straight to
+        the Decisions predicate.
     """
 
     ocr: BaseOCRProvider
     verifier: BaseVerifierProvider
     llm: BaseLLMProvider
+    vision: Optional[BaseVisionReader] = None
 
 
 @dataclass(frozen=True)
@@ -201,14 +220,37 @@ class _DocumentContext:
         PDF binary kept available for rendering verification crops.
     verifier_failures : int
         Number of predicates the verifier could not answer (refusal or error).
+    vision_failures : int
+        Number of low-confidence regions the vision reader could not re-read.
+    raw_ocr_results : dict of int to OCRResult
+        Tier 1 OCR output before any VLM correction (persisted in the cache).
+    rereads : list of _RegionReread
+        VLM re-read outcome of every low-confidence region.
+    vlm_log : list of dict
+        VLM re-reads collected for cache persistence.
+    acta_id : str
+        Document identifier used to name persisted crops.
+    crop_names : set of str
+        Crop file names already written for this document.
+
+    Notes
+    -----
+    ``ocr_results`` holds the corrected OCR (region texts patched by legible
+    VLM readings, confidences unchanged) used to locate evidence.
     """
 
     job_id: str
     doc_sha256: str
     pdf_bytes: bytes = b""
     verifier_failures: int = 0
+    vision_failures: int = 0
     pages: dict[int, PageContent] = field(default_factory=dict)
     ocr_results: dict[int, OCRResult] = field(default_factory=dict)
+    raw_ocr_results: dict[int, OCRResult] = field(default_factory=dict)
+    rereads: list[_RegionReread] = field(default_factory=list)
+    vlm_log: list[dict[str, Any]] = field(default_factory=list)
+    acta_id: str = "document"
+    crop_names: set[str] = field(default_factory=set)
     verifier_log: list[dict[str, Any]] = field(default_factory=list)
     verified: dict[tuple[int, tuple[float, ...], str], VerifierResult] = field(default_factory=dict)
 
@@ -216,6 +258,37 @@ class _DocumentContext:
     def page_texts(self) -> dict[int, str]:
         """dict of int to str: Page text used downstream (native or OCR)."""
         return {number: page.text for number, page in self.pages.items()}
+
+
+@dataclass(frozen=True)
+class _RegionReread:
+    """VLM re-read outcome of one low-confidence OCR region.
+
+    Parameters
+    ----------
+    page_number : int
+        1-indexed page number.
+    bbox : BoundingBox
+        Region location in PDF points.
+    ocr_text : str
+        Tier 1 OCR reading of the region.
+    ocr_confidence : float
+        Tier 1 OCR confidence of the region.
+    result : VisionReadResult or None
+        Vision reading, or ``None`` when the re-read failed.
+    error : str or None
+        Failure description when the re-read failed.
+    applied : bool
+        ``True`` when the legible VLM reading replaced a differing OCR text.
+    """
+
+    page_number: int
+    bbox: BoundingBox
+    ocr_text: str
+    ocr_confidence: float
+    result: Optional[VisionReadResult]
+    error: Optional[str]
+    applied: bool
 
 
 @dataclass(frozen=True)
@@ -327,6 +400,77 @@ def _normalize_space(text: str) -> str:
         Lowercase text with single spaces.
     """
     return " ".join(text.lower().split())
+
+
+def _format_bbox(bbox: BoundingBox) -> str:
+    """Format a bounding box for review reasons.
+
+    Parameters
+    ----------
+    bbox : BoundingBox
+        Box to format.
+
+    Returns
+    -------
+    str
+        ``[x1, y1, x2, y2]`` with one decimal per coordinate.
+    """
+    return f"[{bbox.x1:.1f}, {bbox.y1:.1f}, {bbox.x2:.1f}, {bbox.y2:.1f}]"
+
+
+def _summarize_reading(text: Optional[str]) -> str:
+    """Quote a reading for a review reason, truncated and whitespace-collapsed.
+
+    Parameters
+    ----------
+    text : str or None
+        Reading to summarize.
+
+    Returns
+    -------
+    str
+        Double-quoted reading (``"null"`` when absent), at most 120 characters.
+    """
+    if text is None:
+        return "null"
+    collapsed = " ".join(text.split())
+    if len(collapsed) > _READING_SUMMARY_LIMIT:
+        collapsed = collapsed[: _READING_SUMMARY_LIMIT - 3] + "..."
+    return f'"{collapsed}"'
+
+
+def _patch_ocr_result(ocr: OCRResult, replacements: dict[int, str]) -> OCRResult:
+    """Replace region texts of an OCR result and rebuild its page text.
+
+    Parameters
+    ----------
+    ocr : OCRResult
+        Tier 1 OCR output.
+    replacements : dict of int to str
+        New text per region index.
+
+    Returns
+    -------
+    OCRResult
+        Copy with patched region texts (confidences unchanged) and page text.
+
+    Notes
+    -----
+    When the page text is the newline join of the regions (both shipped
+    engines), it is rebuilt from the patched regions; otherwise each
+    original region text is replaced once in place.
+    """
+    regions = [
+        region.model_copy(update={"text": replacements[index]}) if index in replacements else region
+        for index, region in enumerate(ocr.regions)
+    ]
+    if ocr.text == "\n".join(region.text for region in ocr.regions):
+        text = "\n".join(region.text for region in regions)
+    else:
+        text = ocr.text
+        for index, new_text in replacements.items():
+            text = text.replace(ocr.regions[index].text, new_text, 1)
+    return ocr.model_copy(update={"regions": regions, "text": text})
 
 
 def _union_bbox(regions: list[OCRRegion]) -> BoundingBox:
@@ -765,6 +909,7 @@ class PipelineOrchestrator:
         context.pdf_bytes = pdf_bytes
         context.doc_sha256 = compute_sha256(original_bytes)
         acta_id = acta_id_override or paths[0].stem
+        context.acta_id = acta_id
         source_name = ", ".join(path.name for path in paths)
         log_event(
             _LOGGER,
@@ -795,6 +940,7 @@ class PipelineOrchestrator:
             pdf_bytes, job_id=context.job_id, doc_sha256=context.doc_sha256
         )
         self._fill_ocr(inspected, providers.ocr, context)
+        self._reread_low_confidence(providers.vision, context)
         log_event(
             _LOGGER,
             tag=StatusTag.INFO,
@@ -806,11 +952,14 @@ class PipelineOrchestrator:
             details={
                 "total_pages": len(inspected),
                 "ocr_pages": len(context.ocr_results),
+                "vlm_rereads": len(context.rereads),
+                "vlm_corrections": sum(1 for item in context.rereads if item.applied),
             },
             message=(
                 f"{len(inspected)} pages inspected, "
                 f"{len(inspected) - len(context.ocr_results)} native, "
-                f"{len(context.ocr_results)} routed to OCR"
+                f"{len(context.ocr_results)} routed to OCR, "
+                f"{len(context.rereads)} low-confidence regions re-read"
             ),
         )
 
@@ -914,7 +1063,18 @@ class PipelineOrchestrator:
         )
 
         if not cache_hit:
-            if context.verifier_failures:
+            if context.vision_failures:
+                log_event(
+                    _LOGGER,
+                    tag=StatusTag.WARN,
+                    event="cache_not_written",
+                    stage="persistence",
+                    job_id=context.job_id,
+                    doc_sha256=context.doc_sha256,
+                    details={"vision_failures": context.vision_failures},
+                    message=f"live result for {acta_id} not cached: vision re-read failed",
+                )
+            elif context.verifier_failures:
                 log_event(
                     _LOGGER,
                     tag=StatusTag.WARN,
@@ -1156,6 +1316,7 @@ class PipelineOrchestrator:
                 )
             stage_start = time.perf_counter()
             result = ocr.extract_page(context.doc_sha256, page.page_number, page.image_png)
+            context.raw_ocr_results[page.page_number] = result
             context.ocr_results[page.page_number] = result
             context.pages[page.page_number] = page.model_copy(
                 update={
@@ -1184,6 +1345,166 @@ class PipelineOrchestrator:
                     f"({result.engine})"
                 ),
             )
+
+    def _reread_low_confidence(
+        self, vision: Optional[BaseVisionReader], context: _DocumentContext
+    ) -> None:
+        """Re-read low-confidence OCR regions with the vision model and patch page text.
+
+        Parameters
+        ----------
+        vision : BaseVisionReader or None
+            Vision reader; ``None`` skips the re-read with a WARN per page.
+        context : _DocumentContext
+            Working state with OCR results, updated in place.
+
+        Notes
+        -----
+        Every region below ``ocr_confidence_threshold`` is cropped (bbox plus
+        12 pt padding at 200 dpi) and re-read. A legible, non-empty reading
+        whose normalized form differs from the OCR text replaces the region
+        text in ``context.ocr_results`` and in the page text used by the
+        extraction LLM; region confidences are kept so the evidence is still
+        escalated to the Decisions predicate. Both readings are retained in
+        ``context.rereads`` and later copied onto the evidence. A failed
+        re-read keeps the OCR text and is routed to human review during
+        escalation.
+        """
+        threshold = self._settings.ocr_confidence_threshold
+        for page_number in sorted(context.ocr_results):
+            ocr = context.ocr_results[page_number]
+            low = [
+                (index, region)
+                for index, region in enumerate(ocr.regions)
+                if region.confidence < threshold
+            ]
+            if not low:
+                continue
+            if vision is None:
+                log_event(
+                    _LOGGER,
+                    tag=StatusTag.WARN,
+                    event="vlm_reread_skipped",
+                    stage="vlm_reread",
+                    job_id=context.job_id,
+                    doc_sha256=context.doc_sha256,
+                    details={"page_number": page_number, "low_confidence_regions": len(low)},
+                    message=(
+                        f"page {page_number}: {len(low)} low-confidence regions not re-read "
+                        "(no vision reader configured)"
+                    ),
+                )
+                continue
+            replacements: dict[int, str] = {}
+            for index, region in low:
+                outcome = self._reread_region(vision, context, page_number, region)
+                context.rereads.append(outcome)
+                if outcome.applied and outcome.result is not None and outcome.result.reading:
+                    replacements[index] = outcome.result.reading
+            if replacements:
+                patched = _patch_ocr_result(ocr, replacements)
+                context.ocr_results[page_number] = patched
+                context.pages[page_number] = context.pages[page_number].model_copy(
+                    update={"text": patched.text}
+                )
+
+    def _reread_region(
+        self,
+        vision: BaseVisionReader,
+        context: _DocumentContext,
+        page_number: int,
+        region: OCRRegion,
+    ) -> _RegionReread:
+        """Re-read one low-confidence region and log the outcome.
+
+        Parameters
+        ----------
+        vision : BaseVisionReader
+            Vision reader.
+        context : _DocumentContext
+            Working state (PDF bytes, counters, persistence log).
+        page_number : int
+            1-indexed page number.
+        region : OCRRegion
+            Low-confidence region.
+
+        Returns
+        -------
+        _RegionReread
+            Outcome with both readings, or the failure description.
+        """
+        stage_start = time.perf_counter()
+        crop = self._render_crop(context, page_number, region.bbox)
+        try:
+            result = vision.reread_region(
+                context.doc_sha256, page_number, region.bbox, crop, region.text
+            )
+        except VisionReadError as exc:
+            context.vision_failures += 1
+            log_event(
+                _LOGGER,
+                tag=StatusTag.WARN,
+                event="vlm_reread_failed",
+                stage="vlm_reread",
+                job_id=context.job_id,
+                doc_sha256=context.doc_sha256,
+                duration_ms=self._elapsed(stage_start),
+                details={
+                    "page_number": page_number,
+                    "bbox": region.bbox.as_list(),
+                    "ocr_confidence": region.confidence,
+                    "error": exc.message,
+                },
+                message=f"page {page_number} region re-read failed: {exc.message}; OCR text kept",
+            )
+            return _RegionReread(
+                page_number, region.bbox, region.text, region.confidence, None, exc.message, False
+            )
+        context.vlm_log.append(
+            {
+                "page_number": page_number,
+                "bbox": region.bbox.as_list(),
+                "reading": result.reading,
+                "legible": result.legible,
+                "engine": result.engine,
+            }
+        )
+        differs = _normalize_space(result.reading or "") != _normalize_space(region.text)
+        applied = bool(result.legible and result.reading and differs)
+        if not result.legible:
+            tag, event, verdict = StatusTag.WARN, "vlm_region_illegible", "region not fully legible"
+        elif applied:
+            tag, event, verdict = StatusTag.WARN, "vlm_correction_applied", "OCR text replaced by VLM reading"
+        elif differs:
+            tag, event, verdict = StatusTag.WARN, "vlm_reading_empty", "VLM returned no reading; OCR text kept"
+        else:
+            tag, event, verdict = StatusTag.INFO, "vlm_reading_agrees", "VLM reading agrees with OCR"
+        log_event(
+            _LOGGER,
+            tag=tag,
+            event=event,
+            stage="vlm_reread",
+            job_id=context.job_id,
+            doc_sha256=context.doc_sha256,
+            duration_ms=self._elapsed(stage_start),
+            details={
+                "page_number": page_number,
+                "bbox": region.bbox.as_list(),
+                "ocr_confidence": region.confidence,
+                "legible": result.legible,
+                "readings_agree": not differs,
+                "engine": result.engine,
+                "input_tokens": result.input_tokens,
+                "output_tokens": result.output_tokens,
+            },
+            message=(
+                f"page {page_number} region {_format_bbox(region.bbox)} OCR "
+                f"{region.confidence:.2f}: {verdict} (legible={result.legible})"
+            ),
+        )
+        return _RegionReread(
+            page_number, region.bbox, region.text, region.confidence, result, None, applied
+        )
 
     def _resolve(
         self, raw: RawDeedExtraction, spec: DocumentTypeSpec, context: _DocumentContext
@@ -1434,6 +1755,12 @@ class PipelineOrchestrator:
             bbox = evidence.bounding_box or located.bbox
             predicate = self._build_predicate(name, wrapper, evidence)
             key = (evidence.page_number, tuple(bbox.as_list()), predicate)
+            rereads = [
+                item
+                for item in context.rereads
+                if item.page_number == evidence.page_number and item.bbox.overlaps(bbox)
+            ]
+            self._attach_rereads(evidence, rereads)
             log_event(
                 _LOGGER,
                 tag=StatusTag.WARN,
@@ -1447,6 +1774,7 @@ class PipelineOrchestrator:
                     "ocr_confidence": located.confidence,
                     "ocr_threshold": self._settings.ocr_confidence_threshold,
                     "bbox": bbox.as_list(),
+                    "vlm_rereads": len(rereads),
                 },
                 message=(
                     f"{name}: OCR confidence {located.confidence:.2f} below "
@@ -1454,6 +1782,9 @@ class PipelineOrchestrator:
                     "escalating to predicate verification"
                 ),
             )
+            crop = self._render_crop(context, evidence.page_number, bbox)
+            if crop is not None:
+                evidence.crop_path = self._persist_crop(context, name, evidence.page_number, crop)
             result = context.verified.get(key)
             if result is None:
                 try:
@@ -1463,7 +1794,7 @@ class PipelineOrchestrator:
                         predicate,
                         context.page_texts[evidence.page_number],
                         bbox,
-                        image_png=self._render_crop(context, evidence.page_number, bbox),
+                        image_png=crop,
                     )
                 except VerifierError as exc:
                     self._route_verifier_failure(ref, located.confidence, bbox, exc, context)
@@ -1480,6 +1811,7 @@ class PipelineOrchestrator:
                 )
                 verified_count += 1
             evidence.bounding_box = bbox
+            evidence.verification_probability = result.probability
             if evidence.grounding_verified:
                 evidence.confidence_score = result.calibrated_confidence
             else:
@@ -1487,38 +1819,213 @@ class PipelineOrchestrator:
                     evidence.confidence_score, result.calibrated_confidence
                 )
             evidence.confidence_source = ConfidenceSource.DECISIONS_PREDICATE
-            threshold = self._settings.verifier_confidence_threshold
-            if result.calibrated_confidence < threshold:
-                reason = (
-                    f"Low OCR confidence ({located.confidence:.2f}) and Decisions predicate "
-                    f"confidence ({result.calibrated_confidence:.2f} < {threshold:.2f}) due to "
-                    f"overlapping notary seal on page {evidence.page_number} bbox "
-                    f"[{bbox.x1:.1f}, {bbox.y1:.1f}, {bbox.x2:.1f}, {bbox.y2:.1f}]."
+            self._decide_review(ref, located.confidence, bbox, result, rereads, context)
+        return verified_count
+
+    @staticmethod
+    def _attach_rereads(evidence: Evidence, rereads: list[_RegionReread]) -> None:
+        """Copy the OCR and VLM readings of re-read regions onto an evidence.
+
+        Parameters
+        ----------
+        evidence : Evidence
+            Evidence inside one or more re-read regions (mutated in place).
+        rereads : list of _RegionReread
+            Re-read regions overlapping the evidence box, in reading order.
+
+        Notes
+        -----
+        Several regions are joined with single spaces; ``vlm_legible`` is
+        ``True`` only when every region was re-read and judged legible.
+        """
+        if not rereads:
+            return
+        evidence.ocr_reading = " ".join(item.ocr_text for item in rereads)
+        readings = [
+            item.result.reading for item in rereads if item.result is not None and item.result.reading
+        ]
+        evidence.vlm_reading = " ".join(readings) if readings else None
+        evidence.vlm_legible = all(
+            item.result is not None and item.result.legible for item in rereads
+        )
+
+    def _decide_review(
+        self,
+        ref: _EvidenceRef,
+        ocr_confidence: float,
+        bbox: BoundingBox,
+        result: VerifierResult,
+        rereads: list[_RegionReread],
+        context: _DocumentContext,
+    ) -> None:
+        """Apply the human-review rules after the Decisions predicate.
+
+        Parameters
+        ----------
+        ref : _EvidenceRef
+            Evidence and its dependent fields.
+        ocr_confidence : float
+            Tier 1 OCR confidence of the located region.
+        bbox : BoundingBox
+            Region of interest (also the crop box).
+        result : VerifierResult
+            Decisions predicate result.
+        rereads : list of _RegionReread
+            VLM re-reads of the regions overlapping the evidence.
+        context : _DocumentContext
+            Working state (job and hash).
+
+        Notes
+        -----
+        Review is required when the calibrated confidence is below
+        ``verifier_confidence_threshold``, when the VLM judged the region not
+        fully legible, or when the VLM re-read failed. A VLM correction that
+        disagrees with OCR is accepted without review only when Decisions
+        confirms it at or above the threshold (``[OK] vlm_correction_confirmed``).
+        When low Decisions confidence is the only trigger the reason keeps the
+        spec-02 wording exactly.
+        """
+        evidence = ref.evidence
+        page_number = evidence.page_number
+        threshold = self._settings.verifier_confidence_threshold
+        low_decisions = result.calibrated_confidence < threshold
+        corrected = any(item.applied for item in rereads)
+        illegible = [item for item in rereads if item.result is not None and not item.result.legible]
+        failed = [item for item in rereads if item.error is not None]
+        facts = (
+            f"OCR confidence {ocr_confidence:.2f}; Decisions p={result.probability:.2f}, "
+            f"calibrated {result.calibrated_confidence:.2f} vs {threshold:.2f}; page {page_number} "
+            f"bbox {_format_bbox(bbox)}."
+        )
+        parts: list[str] = []
+        if low_decisions:
+            parts.append(
+                f"Low OCR confidence ({ocr_confidence:.2f}) and Decisions predicate "
+                f"confidence ({result.calibrated_confidence:.2f} < {threshold:.2f}) due to "
+                f"overlapping notary seal on page {page_number} bbox {_format_bbox(bbox)}."
+            )
+            if corrected:
+                parts.append(
+                    "OCR and VLM readings disagree (OCR "
+                    + _summarize_reading(evidence.ocr_reading)
+                    + ", VLM "
+                    + _summarize_reading(evidence.vlm_reading)
+                    + ") and Decisions did not confirm the VLM correction."
                 )
-                for dependent in ref.dependents:
-                    dependent.flag_for_review(reason)
+        if illegible:
+            parts.append(
+                "VLM re-read judged the region not fully legible (legible=false, reading "
+                + _summarize_reading(" ".join(item.result.reading or "" for item in illegible if item.result) or None)
+                + "); "
+                + facts
+            )
+        if failed:
+            parts.append(
+                f"VLM re-read unavailable ({'; '.join(item.error or '' for item in failed)}); {facts}"
+            )
+        if not parts:
+            if corrected:
                 log_event(
                     _LOGGER,
-                    tag=StatusTag.REVIEW_REQUIRED,
-                    event="human_review_required",
+                    tag=StatusTag.OK,
+                    event="vlm_correction_confirmed",
                     stage="escalation",
                     job_id=context.job_id,
                     doc_sha256=context.doc_sha256,
                     details={
-                        "field": name,
-                        "page_number": evidence.page_number,
-                        "ocr_confidence": located.confidence,
+                        "field": ref.name,
+                        "page_number": page_number,
+                        "ocr_confidence": ocr_confidence,
                         "probability": result.probability,
                         "calibrated_confidence": result.calibrated_confidence,
-                        "verifier_threshold": threshold,
                         "bbox": bbox.as_list(),
                     },
                     message=(
-                        f"{name}: OCR {located.confidence:.2f}, p={result.probability:.2f}, "
-                        f"calibrated {result.calibrated_confidence:.2f} < {threshold:.2f}"
+                        f"{ref.name}: VLM correction confirmed by Decisions "
+                        f"(p={result.probability:.2f}, calibrated "
+                        f"{result.calibrated_confidence:.2f} >= {threshold:.2f})"
                     ),
                 )
-        return verified_count
+            return
+        reason = " ".join(parts)
+        for dependent in ref.dependents:
+            dependent.flag_for_review(reason)
+        log_event(
+            _LOGGER,
+            tag=StatusTag.REVIEW_REQUIRED,
+            event="human_review_required",
+            stage="escalation",
+            job_id=context.job_id,
+            doc_sha256=context.doc_sha256,
+            details={
+                "field": ref.name,
+                "page_number": page_number,
+                "ocr_confidence": ocr_confidence,
+                "probability": result.probability,
+                "calibrated_confidence": result.calibrated_confidence,
+                "verifier_threshold": threshold,
+                "bbox": bbox.as_list(),
+                "vlm_legible": evidence.vlm_legible,
+                "vlm_corrected": corrected,
+                "vlm_failed": bool(failed),
+            },
+            message=(
+                f"{ref.name}: OCR {ocr_confidence:.2f}, p={result.probability:.2f}, "
+                f"calibrated {result.calibrated_confidence:.2f} vs {threshold:.2f}, "
+                f"VLM legible={evidence.vlm_legible}"
+            ),
+        )
+
+    def _persist_crop(
+        self, context: _DocumentContext, name: str, page_number: int, crop: bytes
+    ) -> Optional[str]:
+        """Write a verification crop under ``outputs/crops``.
+
+        Parameters
+        ----------
+        context : _DocumentContext
+            Working state (acta identifier and names already used).
+        name : str
+            Field or event name (``amendment_history[i]`` becomes
+            ``amendment_history_i``).
+        page_number : int
+            1-indexed page number.
+        crop : bytes
+            PNG crop.
+
+        Returns
+        -------
+        str or None
+            Project-relative path, or ``None`` (with a WARN record) when the
+            crop cannot be written.
+
+        Notes
+        -----
+        Files are named ``{acta_id}_p{page}_{field}_bbox.png``; a second crop
+        for the same field and page gets a ``_2``, ``_3`` ... suffix.
+        """
+        slug = "".join(char if char.isalnum() or char == "_" else "_" for char in name).strip("_")
+        base = f"{context.acta_id}_p{page_number}_{slug}_bbox"
+        crop_name = f"{base}.png"
+        counter = 2
+        while crop_name in context.crop_names:
+            crop_name = f"{base}_{counter}.png"
+            counter += 1
+        context.crop_names.add(crop_name)
+        try:
+            return self._repository.save_crop(crop_name, crop)
+        except StorageError as exc:
+            log_event(
+                _LOGGER,
+                tag=StatusTag.WARN,
+                event="crop_not_written",
+                stage="escalation",
+                job_id=context.job_id,
+                doc_sha256=context.doc_sha256,
+                details={"crop_name": crop_name, "error": exc.message},
+                message=f"cannot persist crop {crop_name}: {exc.message}",
+            )
+            return None
 
     def _render_crop(
         self, context: _DocumentContext, page_number: int, bbox: BoundingBox
@@ -1693,7 +2200,7 @@ class PipelineOrchestrator:
         raw_snapshot : dict
             JSON dump of the raw (pre-resolution) extraction.
         context : _DocumentContext
-            Working state with OCR results and verifier answers.
+            Working state with OCR results, VLM re-reads and verifier answers.
         """
         stage_start = time.perf_counter()
         existing = self._repository.load_cache(context.doc_sha256)
@@ -1719,8 +2226,11 @@ class PipelineOrchestrator:
             "raw_extraction": raw_snapshot,
             "ocr_pages": {
                 str(number): result.model_dump(mode="json")
-                for number, result in sorted(context.ocr_results.items())
+                for number, result in sorted(
+                    (context.raw_ocr_results or context.ocr_results).items()
+                )
             },
+            "vlm_reads": context.vlm_log,
             "verifier_responses": context.verifier_log,
         }
         path = self._repository.save_cache(context.doc_sha256, payload)
@@ -1849,7 +2359,8 @@ def build_orchestrator(settings: Settings, *, live: bool) -> PipelineOrchestrato
     PipelineOrchestrator
         Orchestrator whose cache hits are served by deterministic providers
         and, when ``live`` and an API key are available, whose cache misses
-        use OpenAI providers with RapidOCR for scanned pages.
+        use OpenAI providers (extraction, vision re-read, Decisions) with
+        RapidOCR for scanned pages.
 
     Notes
     -----
@@ -1862,6 +2373,7 @@ def build_orchestrator(settings: Settings, *, live: bool) -> PipelineOrchestrato
         ocr=DeterministicOCRProvider(repository),
         verifier=DeterministicVerifierProvider(repository),
         llm=CachedLLMProvider(repository),
+        vision=DeterministicVLMProvider(repository),
     )
     registry = DocumentRegistry.default()
     live_bundle: Optional[ProviderBundle] = None
@@ -1870,6 +2382,7 @@ def build_orchestrator(settings: Settings, *, live: bool) -> PipelineOrchestrato
             ocr=LazyOCRProvider(repository, "rapidocr"),
             verifier=build_verifier_provider(settings, repository, True),
             llm=build_llm_provider(settings, repository, True, registry),
+            vision=build_vision_provider(settings, repository, True),
         )
     elif live:
         log_event(
