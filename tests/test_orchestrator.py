@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import io
 import json
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Optional
 
 import pytest
+from PIL import Image
 from typer.testing import CliRunner
 
 from src.cli.main import _revocation_lines, _say, app
 from src.core.config import Settings
+from src.core.exceptions import VerifierError
 from src.core.logger import StatusTag
 from src.core.registry import DocumentRegistry, DocumentTypeSpec
 from src.ingestion.hasher import compute_file_sha256
@@ -62,6 +65,7 @@ class FixedVerifier(BaseVerifierProvider):
         """
         self._probability = probability
         self.calls = 0
+        self.images: list[Optional[bytes]] = []
 
     def verify_predicate(
         self,
@@ -70,6 +74,8 @@ class FixedVerifier(BaseVerifierProvider):
         predicate: str,
         context_text: str,
         bbox: Optional[BoundingBox],
+        *,
+        image_png: Optional[bytes] = None,
     ) -> VerifierResult:
         """Return the fixed result.
 
@@ -85,6 +91,8 @@ class FixedVerifier(BaseVerifierProvider):
             Page context.
         bbox : BoundingBox or None
             Evidence region.
+        image_png : bytes or None, default None
+            Region crop forwarded by the orchestrator.
 
         Returns
         -------
@@ -92,6 +100,7 @@ class FixedVerifier(BaseVerifierProvider):
             Result with ``|2p - 1|`` confidence.
         """
         self.calls += 1
+        self.images.append(image_png)
         return VerifierResult(
             predicate=predicate,
             probability=self._probability,
@@ -212,6 +221,108 @@ def test_two_line_quote_triggers_escalation_and_keeps_grounding_cap(
         assert raw.capital_social_actual.evidence is not None
         assert raw.capital_social_actual.evidence.confidence_score == pytest.approx(expected)
         assert raw.capital_social_actual.evidence.confidence_source is ConfidenceSource.DECISIONS_PREDICATE
+
+
+class RefusingVerifier(BaseVerifierProvider):
+    """Verifier that always fails as a Decisions refusal would."""
+
+    def verify_predicate(
+        self,
+        doc_sha256: str,
+        page_number: int,
+        predicate: str,
+        context_text: str,
+        bbox: Optional[BoundingBox],
+        *,
+        image_png: Optional[bytes] = None,
+    ) -> VerifierResult:
+        """Raise the refusal error.
+
+        Parameters
+        ----------
+        doc_sha256 : str
+            Document hash.
+        page_number : int
+            One-based page number.
+        predicate : str
+            Predicate text.
+        context_text : str
+            Page context.
+        bbox : BoundingBox or None
+            Evidence region.
+        image_png : bytes or None, default None
+            Region crop.
+
+        Returns
+        -------
+        VerifierResult
+            Never returns.
+
+        Raises
+        ------
+        VerifierError
+            Always.
+        """
+        raise VerifierError("Decisions API refused to answer the verification predicate")
+
+
+def test_verifier_refusal_routes_field_to_review(
+    settings: Settings, raw_extractions: dict[str, RawDeedExtraction]
+) -> None:
+    """A verifier refusal flags the field with an explicit reason instead of aborting.
+
+    Parameters
+    ----------
+    settings : object
+        Isolated workspace settings.
+    raw_extractions : object
+        Raw extraction payloads keyed by deed identifier.
+    """
+    raw = raw_extractions["acta_b"].model_copy(deep=True)
+    raw.capital_social_actual.evidence = _quote_evidence(True)
+    raw.capital_social_actual.requires_human_review = False
+    raw.capital_social_actual.review_reason = None
+    cached, _, _, _ = build_spy_bundle(FileSystemRepository(settings))
+    verifier = RefusingVerifier()
+    bundle = ProviderBundle(ocr=cached.ocr, verifier=verifier, llm=cached.llm)
+    orchestrator = build_custom_orchestrator(settings, bundle, None)
+    context = _scanned_context(_two_line_ocr())
+    assert orchestrator._escalate(raw, verifier, context) == 0
+    assert context.verifier_failures == 1
+    assert raw.capital_social_actual.requires_human_review is True
+    reason = raw.capital_social_actual.review_reason or ""
+    assert "Decisions predicate verification unavailable" in reason
+    assert "refused" in reason
+    assert raw.capital_social_actual.evidence is not None
+    assert raw.capital_social_actual.evidence.confidence_score == pytest.approx(0.55)
+    events = [r["event"] for r in read_audit_records(settings.audit_log_path)]
+    assert "verifier_unavailable" in events
+
+
+def test_scanned_capital_escalation_sends_region_crop(
+    settings: Settings, sample_paths: dict[str, Path]
+) -> None:
+    """Acta B escalation passes a 200 dpi PNG crop of the padded capital bbox.
+
+    Parameters
+    ----------
+    settings : object
+        Isolated workspace settings.
+    sample_paths : object
+        Generated sample PDF paths keyed by deed identifier.
+    """
+    cached, _, spy_verifier, _ = build_spy_bundle(FileSystemRepository(settings))
+    orchestrator = build_custom_orchestrator(settings, cached, None)
+    result = orchestrator.process_document(sample_paths["acta_b"])
+    assert result.output.capital_social_actual.requires_human_review is True
+    assert spy_verifier.calls == 1
+    crop = spy_verifier.images[0]
+    assert crop is not None and crop.startswith(b"\x89PNG")
+    with Image.open(io.BytesIO(crop)) as image:
+        width, height = image.size
+    scale = 200 / 72
+    assert width == pytest.approx((520 - 72 + 24) * scale, abs=2)
+    assert height == pytest.approx((455 - 410 + 24) * scale, abs=2)
 
 
 def test_locate_ignores_stray_short_regions() -> None:
@@ -620,7 +731,7 @@ def test_stale_live_entry_is_a_miss_and_current_entry_is_a_hit(
     sample_paths : object
         Generated sample PDF paths keyed by deed identifier.
     """
-    settings = replace(settings, openai_model="fake-live-model")
+    settings = replace(settings, openai_extraction_model="fake-live-model")
     sample = sample_paths["acta_a"]
     cache_file = settings.cache_file_for(compute_file_sha256(sample))
     payload = json.loads(cache_file.read_text(encoding="utf-8"))

@@ -15,7 +15,7 @@ from src.core.config import Settings
 from src.core.exceptions import PDFInspectionError
 from src.core.logger import StatusTag, get_logger, log_event
 from src.providers.interfaces import PageContent, PageSource
-from src.schemas.deed_models import ConfidenceSource
+from src.schemas.deed_models import BoundingBox, ConfidenceSource
 
 RENDER_DPI: int = 200
 """Resolution used when rendering scanned pages for OCR."""
@@ -188,3 +188,72 @@ class PDFInspector:
             ),
         )
         return content
+
+
+def render_region_png(
+    pdf_bytes: bytes,
+    page_number: int,
+    bbox: BoundingBox,
+    *,
+    dpi: int = RENDER_DPI,
+    padding: float = 12.0,
+) -> bytes:
+    """Render a padded page region as a PNG crop.
+
+    Parameters
+    ----------
+    pdf_bytes : bytes
+        PDF binary.
+    page_number : int
+        1-indexed page number.
+    bbox : BoundingBox
+        Region in PDF points (top-left origin, as used by PyMuPDF).
+    dpi : int, default 200
+        Render resolution.
+    padding : float, default 12.0
+        Margin in points added on every side before clamping to the page.
+
+    Returns
+    -------
+    bytes
+        PNG image of the clipped region.
+
+    Raises
+    ------
+    PDFInspectionError
+        If the PDF cannot be opened, the page does not exist, or the padded
+        region does not intersect the page.
+    """
+    try:
+        document = pymupdf.open(stream=pdf_bytes, filetype="pdf")  # type: ignore[no-untyped-call]
+    except Exception as exc:
+        raise PDFInspectionError("payload is not a readable PDF", {"error": str(exc)}) from exc
+    try:
+        if page_number < 1 or page_number > document.page_count:
+            raise PDFInspectionError(
+                f"page {page_number} does not exist",
+                {"page_number": page_number, "page_count": document.page_count},
+            )
+        page = document.load_page(page_number - 1)  # type: ignore[no-untyped-call]
+        bounds = page.rect
+        clip = pymupdf.Rect(  # type: ignore[no-untyped-call]
+            max(bounds.x0, bbox.x1 - padding),
+            max(bounds.y0, bbox.y1 - padding),
+            min(bounds.x1, bbox.x2 + padding),
+            min(bounds.y1, bbox.y2 + padding),
+        )
+        if clip.is_empty:
+            raise PDFInspectionError(
+                "crop region does not intersect the page",
+                {"page_number": page_number, "bbox": bbox.as_list()},
+            )
+        return bytes(page.get_pixmap(dpi=dpi, clip=clip).tobytes("png"))
+    except PDFInspectionError:
+        raise
+    except Exception as exc:
+        raise PDFInspectionError(
+            f"failed to render region on page {page_number}",
+            {"page_number": page_number, "error": str(exc)},
+        ) from exc
+    finally:
+        document.close()  # type: ignore[no-untyped-call]

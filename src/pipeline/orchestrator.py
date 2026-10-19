@@ -37,12 +37,14 @@ from src.core.exceptions import (
     CacheMissError,
     IngestionError,
     OCRError,
+    PDFInspectionError,
     PipelineError,
+    VerifierError,
 )
 from src.core.logger import StatusTag, get_logger, log_event
 from src.core.registry import ACTA_CONSTITUTIVA, DocumentRegistry, DocumentTypeSpec
 from src.ingestion.hasher import compute_sha256
-from src.ingestion.pdf_inspector import PDFInspector
+from src.ingestion.pdf_inspector import PDFInspector, render_region_png
 from src.pipeline.resolver import TemporalResolver
 from src.pipeline.validators import (
     LIST_FIELDS,
@@ -194,10 +196,16 @@ class _DocumentContext:
         Verifier answers collected for cache persistence.
     verified : dict
         Per-document memo of verifier results keyed by page, bbox and predicate.
+    pdf_bytes : bytes
+        PDF binary kept available for rendering verification crops.
+    verifier_failures : int
+        Number of predicates the verifier could not answer (refusal or error).
     """
 
     job_id: str
     doc_sha256: str
+    pdf_bytes: bytes = b""
+    verifier_failures: int = 0
     pages: dict[int, PageContent] = field(default_factory=dict)
     ocr_results: dict[int, OCRResult] = field(default_factory=dict)
     verifier_log: list[dict[str, Any]] = field(default_factory=list)
@@ -671,6 +679,7 @@ class PipelineOrchestrator:
         spec = self._registry.get(document_type)
         stage_start = time.perf_counter()
         pdf_bytes = self._read_pdf(pdf_path)
+        context.pdf_bytes = pdf_bytes
         context.doc_sha256 = compute_sha256(pdf_bytes)
         acta_id = pdf_path.stem
         log_event(
@@ -811,7 +820,18 @@ class PipelineOrchestrator:
         )
 
         if not cache_hit:
-            if failures:
+            if context.verifier_failures:
+                log_event(
+                    _LOGGER,
+                    tag=StatusTag.WARN,
+                    event="cache_not_written",
+                    stage="persistence",
+                    job_id=context.job_id,
+                    doc_sha256=context.doc_sha256,
+                    details={"verifier_failures": context.verifier_failures},
+                    message=f"live result for {acta_id} not cached: verifier could not answer",
+                )
+            elif failures:
                 log_event(
                     _LOGGER,
                     tag=StatusTag.WARN,
@@ -975,7 +995,7 @@ class PipelineOrchestrator:
             return True
         return (
             entry.get("prompt_sha256") == SYSTEM_PROMPT_SHA256
-            and version == f"openai:{self._settings.openai_model}"
+            and version == f"openai:{self._settings.openai_extraction_model}"
         )
 
     def _fill_ocr(
@@ -1308,13 +1328,18 @@ class PipelineOrchestrator:
             )
             result = context.verified.get(key)
             if result is None:
-                result = verifier.verify_predicate(
-                    context.doc_sha256,
-                    evidence.page_number,
-                    predicate,
-                    context.page_texts[evidence.page_number],
-                    bbox,
-                )
+                try:
+                    result = verifier.verify_predicate(
+                        context.doc_sha256,
+                        evidence.page_number,
+                        predicate,
+                        context.page_texts[evidence.page_number],
+                        bbox,
+                        image_png=self._render_crop(context, evidence.page_number, bbox),
+                    )
+                except VerifierError as exc:
+                    self._route_verifier_failure(ref, located.confidence, bbox, exc, context)
+                    continue
                 context.verified[key] = result
                 context.verifier_log.append(
                     {
@@ -1322,6 +1347,7 @@ class PipelineOrchestrator:
                         "bbox": bbox.as_list(),
                         "predicate": predicate,
                         "probability": result.probability,
+                        "engine": result.engine,
                     }
                 )
                 verified_count += 1
@@ -1365,6 +1391,101 @@ class PipelineOrchestrator:
                     ),
                 )
         return verified_count
+
+    def _render_crop(
+        self, context: _DocumentContext, page_number: int, bbox: BoundingBox
+    ) -> Optional[bytes]:
+        """Render the padded region crop sent to the verifier.
+
+        Parameters
+        ----------
+        context : _DocumentContext
+            Working state holding the PDF bytes.
+        page_number : int
+            1-indexed page number.
+        bbox : BoundingBox
+            Region of interest in PDF points.
+
+        Returns
+        -------
+        bytes or None
+            PNG crop at 200 dpi with 12 pt padding, or ``None`` (with a WARN
+            record) when the region cannot be rendered, in which case the
+            verifier judges the OCR text alone.
+        """
+        if not context.pdf_bytes:
+            return None
+        try:
+            return render_region_png(context.pdf_bytes, page_number, bbox)
+        except PDFInspectionError as exc:
+            log_event(
+                _LOGGER,
+                tag=StatusTag.WARN,
+                event="verification_crop_failed",
+                stage="escalation",
+                job_id=context.job_id,
+                doc_sha256=context.doc_sha256,
+                details={"page_number": page_number, "bbox": bbox.as_list(), "error": exc.message},
+                message=f"cannot render crop on page {page_number}; verifying text only",
+            )
+            return None
+
+    def _route_verifier_failure(
+        self,
+        ref: _EvidenceRef,
+        ocr_confidence: float,
+        bbox: BoundingBox,
+        exc: VerifierError,
+        context: _DocumentContext,
+    ) -> None:
+        """Flag the fields behind an evidence the verifier could not answer.
+
+        Parameters
+        ----------
+        ref : _EvidenceRef
+            Evidence and its dependent fields.
+        ocr_confidence : float
+            OCR confidence of the located region.
+        bbox : BoundingBox
+            Region of interest.
+        exc : VerifierError
+            Refusal or request failure reported by the verifier.
+        context : _DocumentContext
+            Working state (counts the failure).
+
+        Notes
+        -----
+        The evidence keeps its OCR-derived confidence and the dependents are
+        routed to human review with an explicit reason; the failure is never
+        silent and the live result is not cached.
+        """
+        evidence = ref.evidence
+        context.verifier_failures += 1
+        evidence.bounding_box = bbox
+        evidence.confidence_score = min(evidence.confidence_score, ocr_confidence)
+        reason = (
+            f"Low OCR confidence ({ocr_confidence:.2f}) and Decisions predicate verification "
+            f"unavailable ({exc.message}) on page {evidence.page_number} bbox "
+            f"[{bbox.x1:.1f}, {bbox.y1:.1f}, {bbox.x2:.1f}, {bbox.y2:.1f}]."
+        )
+        for dependent in ref.dependents:
+            dependent.flag_for_review(reason)
+        log_event(
+            _LOGGER,
+            tag=StatusTag.REVIEW_REQUIRED,
+            event="verifier_unavailable",
+            stage="escalation",
+            job_id=context.job_id,
+            doc_sha256=context.doc_sha256,
+            details={
+                "field": ref.name,
+                "page_number": evidence.page_number,
+                "ocr_confidence": ocr_confidence,
+                "bbox": bbox.as_list(),
+                "error": exc.message,
+            },
+            message=f"{ref.name}: {reason}",
+        )
 
     def _route_amendment_confidence(
         self, model: RawDeedExtraction, context: _DocumentContext

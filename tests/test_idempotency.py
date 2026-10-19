@@ -47,6 +47,7 @@ class SpyLLM(BaseLLMProvider):
         """
         self._delegate = delegate
         self.calls = 0
+        self.images: list[Optional[bytes]] = []
 
     def extract(
         self, doc_sha256: str, pages: list[PageContent], document_type: str
@@ -85,6 +86,7 @@ class SpyOCR(BaseOCRProvider):
         """
         self._delegate = delegate
         self.calls = 0
+        self.images: list[Optional[bytes]] = []
 
     def extract_page(self, doc_sha256: str, page_number: int, image_png: bytes) -> OCRResult:
         """Count the call and delegate.
@@ -120,6 +122,7 @@ class SpyVerifier(BaseVerifierProvider):
         """
         self._delegate = delegate
         self.calls = 0
+        self.images: list[Optional[bytes]] = []
 
     def verify_predicate(
         self,
@@ -128,6 +131,8 @@ class SpyVerifier(BaseVerifierProvider):
         predicate: str,
         context_text: str,
         bbox: Optional[BoundingBox],
+        *,
+        image_png: Optional[bytes] = None,
     ) -> VerifierResult:
         """Count the call and delegate.
 
@@ -143,6 +148,8 @@ class SpyVerifier(BaseVerifierProvider):
             Page context.
         bbox : BoundingBox or None
             Evidence region.
+        image_png : bytes or None, default None
+            Region crop forwarded by the orchestrator.
 
         Returns
         -------
@@ -150,7 +157,10 @@ class SpyVerifier(BaseVerifierProvider):
             Verification outcome.
         """
         self.calls += 1
-        return self._delegate.verify_predicate(doc_sha256, page_number, predicate, context_text, bbox)
+        self.images.append(image_png)
+        return self._delegate.verify_predicate(
+            doc_sha256, page_number, predicate, context_text, bbox, image_png=image_png
+        )
 
 
 def build_spy_bundle(reference: FileSystemRepository) -> tuple[ProviderBundle, SpyOCR, SpyVerifier, SpyLLM]:
@@ -386,7 +396,7 @@ def test_live_miss_persists_cache_and_second_run_hits(
     acta_id : object
         Parametrized deed identifier.
     """
-    settings = replace(settings, openai_model="fake-live-model")
+    settings = replace(settings, openai_extraction_model="fake-live-model")
     reference = FileSystemRepository(settings)
     sha = compute_file_sha256(sample_paths[acta_id])
     reference_payload = json.loads(settings.cache_file_for(sha).read_text(encoding="utf-8"))

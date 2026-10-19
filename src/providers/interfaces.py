@@ -170,6 +170,8 @@ class BaseVerifierProvider(ABC):
         predicate: str,
         context_text: str,
         bbox: Optional[BoundingBox],
+        *,
+        image_png: Optional[bytes] = None,
     ) -> VerifierResult:
         """Estimate the probability that a predicate holds.
 
@@ -185,6 +187,9 @@ class BaseVerifierProvider(ABC):
             Page or region text supporting the decision.
         bbox : BoundingBox or None
             Region of interest.
+        image_png : bytes or None, default None
+            PNG crop of the region of interest for visual verification;
+            providers that do not use images ignore it.
 
         Returns
         -------
