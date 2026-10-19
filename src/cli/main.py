@@ -1,6 +1,7 @@
 """Command line presenter for the corporate deed automation pipeline.
 
-Exposes ``generate-samples``, ``process-all``, ``evaluate`` and ``demo``.
+Exposes ``generate-samples``, ``process-all``, ``process-file``, ``evaluate``
+and ``demo``.
 This module is the only place where results are rendered for humans; all
 runtime events inside the pipeline go through the structured logger.
 """
@@ -433,6 +434,51 @@ def _process_all(
     return True
 
 
+def _process_file(
+    settings: Settings,
+    paths: list[Path],
+    acta_id: Optional[str],
+    live: bool,
+    force_refresh: bool,
+    document_type: str,
+) -> bool:
+    """Process one PDF or several images as a single document.
+
+    Parameters
+    ----------
+    settings : Settings
+        Runtime settings.
+    paths : list of Path
+        One PDF, or one or more PNG/JPG images in page order.
+    acta_id : str or None
+        Document identifier; defaults to the first file stem.
+    live : bool
+        Whether live providers may be used on cache misses.
+    force_refresh : bool
+        Whether to bypass the cache.
+    document_type : str
+        Registered document type.
+
+    Returns
+    -------
+    bool
+        ``True`` if the document was processed.
+    """
+    try:
+        DocumentRegistry.default().get(document_type)
+        orchestrator = build_orchestrator(settings, live=live)
+        result = orchestrator.process_files(
+            paths, acta_id=acta_id, document_type=document_type, force_refresh=force_refresh
+        )
+    except PipelineError as exc:
+        _say(StatusTag.ERROR, f"{type(exc).__name__}: {exc.message}")
+        return False
+    _render_results([result])
+    mode = "live" if live and settings.live_mode_available else "deterministic cache"
+    _say(StatusTag.OK, f"{result.acta_id} processed ({mode}); output in outputs/")
+    return True
+
+
 def _evaluate(settings: Settings) -> bool:
     """Run the evaluator and render its report.
 
@@ -567,6 +613,51 @@ def process_all(
         With code 1 on failure.
     """
     if not _process_all(_settings(ctx), live, force_refresh, document_type):
+        raise typer.Exit(code=1)
+
+
+@app.command("process-file")
+def process_file(
+    ctx: typer.Context,
+    paths: list[Path] = typer.Argument(
+        ..., help="One PDF, or one or more PNG/JPG images forming a single document."
+    ),
+    acta_id: Optional[str] = typer.Option(
+        None, "--acta-id", help="Document identifier (default: first file stem)."
+    ),
+    live: bool = typer.Option(
+        False, "--live/--no-live", help="Use live OpenAI providers on cache misses."
+    ),
+    force_refresh: bool = typer.Option(
+        False, "--force-refresh", help="Ignore existing cache entries."
+    ),
+    document_type: str = typer.Option(
+        ACTA_CONSTITUTIVA, "--document-type", help="Registered document type."
+    ),
+) -> None:
+    """Process one PDF or a set of images as a single document.
+
+    Parameters
+    ----------
+    ctx : typer.Context
+        Typer context carrying the settings.
+    paths : list of Path
+        One PDF, or PNG/JPG images in page order (image N is page N).
+    acta_id : str or None
+        Document identifier.
+    live : bool
+        Whether live providers may be used on cache misses.
+    force_refresh : bool
+        Whether to bypass the cache.
+    document_type : str
+        Registered document type.
+
+    Raises
+    ------
+    typer.Exit
+        With code 1 on failure.
+    """
+    if not _process_file(_settings(ctx), paths, acta_id, live, force_refresh, document_type):
         raise typer.Exit(code=1)
 
 
