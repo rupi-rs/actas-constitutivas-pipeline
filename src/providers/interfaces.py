@@ -4,7 +4,10 @@ High-level pipeline components depend only on these interfaces
 (Dependency Inversion); concrete OCR, verifier, LLM and storage
 implementations live in sibling modules and may be live or
 deterministic (cache-backed). The vision reader re-reads low-confidence OCR
-regions from their image crop before structured extraction.
+regions from their image crop before structured extraction. The decision
+scorer answers ordinal ``score`` questions about a whole page (legibility,
+prompt-injection risk) and is kept separate from the predicate verifier
+(Interface Segregation).
 """
 
 from __future__ import annotations
@@ -12,7 +15,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from enum import Enum
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -164,6 +167,110 @@ class VisionReadResult(BaseModel):
     output_tokens: Optional[int] = None
 
 
+class ScoreLevel(BaseModel):
+    """One ordered level of a Decisions ``score`` question.
+
+    Parameters
+    ----------
+    label : str
+        Short level label.
+    description : str
+        What the level means.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    label: str
+    description: str
+
+
+class ScoreQuestion(BaseModel):
+    """A Decisions ``score`` question with levels ordered lowest to highest.
+
+    Parameters
+    ----------
+    name : str
+        Question name echoed in the answer (for example ``OCR_LEGIBILITY_SCORE``).
+    instructions : str
+        Rating instructions.
+    levels : tuple of ScoreLevel
+        At least two levels, lowest first; level ``i`` has index ``i``.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    name: str
+    instructions: str
+    levels: tuple[ScoreLevel, ...] = Field(min_length=2)
+
+
+class ScoreLevelProbability(BaseModel):
+    """Probability assigned to one level of a ``score`` question.
+
+    Parameters
+    ----------
+    value : int
+        0-based level index.
+    label : str
+        Level label.
+    probability : float
+        Probability of the level.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    value: int = Field(ge=0)
+    label: str
+    probability: float = Field(ge=0.0, le=1.0)
+
+
+ScoreOutcome = Literal["answered", "refused", "unknown"]
+"""Outcome of a score question: answered, refused by the model, or unknown (no cached answer)."""
+
+
+class ScoreResult(BaseModel):
+    """Answer to one Decisions ``score`` question about a page.
+
+    Parameters
+    ----------
+    page_number : int
+        1-indexed page number.
+    name : str
+        Question name.
+    outcome : {"answered", "refused", "unknown"}
+        ``refused`` when the model declined; ``unknown`` when a
+        deterministic provider has no cached answer.
+    score : float or None, default None
+        Probability-weighted average of the 0-based level indices.
+    normalized_score : float or None, default None
+        ``score / (levels - 1)`` in ``[0.0, 1.0]``.
+    confidence : float or None, default None
+        Confidence reported by the API.
+    probabilities : list of ScoreLevelProbability
+        Per-level probabilities.
+    levels : int
+        Number of levels of the question.
+    engine : str
+        Scorer identifier.
+    input_tokens : int or None, default None
+        Prompt tokens of the request that produced the answer (shared by
+        every question batched in that request).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    page_number: int = Field(ge=1)
+    name: str
+    outcome: ScoreOutcome
+    score: Optional[float] = Field(default=None, ge=0.0)
+    normalized_score: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    probabilities: list[ScoreLevelProbability] = Field(default_factory=list)
+    levels: int = Field(ge=2)
+    engine: str
+    input_tokens: Optional[int] = None
+
+
 class BaseOCRProvider(ABC):
     """Abstract OCR provider for scanned pages."""
 
@@ -233,6 +340,47 @@ class BaseVerifierProvider(ABC):
         ------
         src.core.exceptions.VerifierError
             If verification fails.
+        """
+
+
+class BaseDecisionScorer(ABC):
+    """Abstract page scorer answering Decisions ``score`` questions."""
+
+    @abstractmethod
+    def score_page(
+        self,
+        doc_sha256: str,
+        page_number: int,
+        questions: list[ScoreQuestion],
+        *,
+        text: str,
+        image_png: Optional[bytes] = None,
+    ) -> list[ScoreResult]:
+        """Answer independent score questions about one page in one request.
+
+        Parameters
+        ----------
+        doc_sha256 : str
+            Document hash (used by cache-backed scorers).
+        page_number : int
+            1-indexed page number.
+        questions : list of ScoreQuestion
+            Questions answered over the same input, batched together.
+        text : str
+            Untrusted page text (native or OCR).
+        image_png : bytes or None, default None
+            Full page image for scanned pages.
+
+        Returns
+        -------
+        list of ScoreResult
+            One result per question, in question order; a refusal is
+            returned as ``outcome="refused"`` and never raised.
+
+        Raises
+        ------
+        src.core.exceptions.DecisionScoreError
+            If the request fails or the response is malformed.
         """
 
 
