@@ -318,7 +318,8 @@ def test_scanned_capital_escalation_sends_region_crop(
     orchestrator = build_custom_orchestrator(settings, cached, None)
     result = orchestrator.process_document(sample_paths["acta_b"])
     assert result.output.capital_social_actual.requires_human_review is True
-    assert spy_verifier.calls == 3
+    # Value-based predicates: capital, two shareholders, one representative and two powers
+    assert spy_verifier.calls == 6
     crop = spy_verifier.images[-1]
     assert crop is not None and crop.startswith(b"\x89PNG")
     with Image.open(io.BytesIO(crop)) as image:

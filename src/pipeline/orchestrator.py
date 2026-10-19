@@ -518,6 +518,31 @@ def _format_bbox(bbox: BoundingBox) -> str:
     return f"[{bbox.x1:.1f}, {bbox.y1:.1f}, {bbox.x2:.1f}, {bbox.y2:.1f}]"
 
 
+_SPANISH_MONTHS: tuple[str, ...] = (
+    "enero", "febrero", "marzo", "abril", "mayo", "junio",
+    "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+)
+
+
+def _date_in_words(iso_date: str) -> str:
+    """Render an ISO date the way Mexican deeds write it.
+
+    Parameters
+    ----------
+    iso_date : str
+        Date in ``YYYY-MM-DD`` form.
+
+    Returns
+    -------
+    str
+        ``"15 de marzo de 2021"``, or the input unchanged when it is not a valid ISO date.
+    """
+    parts = iso_date.split("-")
+    if len(parts) != 3 or not all(part.isdigit() for part in parts) or not 1 <= int(parts[1]) <= 12:
+        return iso_date
+    return f"{int(parts[2])} de {_SPANISH_MONTHS[int(parts[1]) - 1]} de {parts[0]}"
+
+
 def _summarize_reading(text: Optional[str]) -> str:
     """Quote a reading for a review reason, truncated and whitespace-collapsed.
 
@@ -2600,17 +2625,48 @@ class PipelineOrchestrator:
         Returns
         -------
         str
-            Capital predicate for ``capital_social_actual``; otherwise a
-            reading-accuracy predicate over the evidence quote.
+            A value-based predicate for the field (or list item) the evidence
+            supports; a substance-of-passage predicate as the fallback.
+
+        Notes
+        -----
+        Live runs showed that asking whether a crop reads a quote verbatim
+        fails on clean scans (quotes longer than the crop, ISO dates versus
+        dates in words, accents), so predicates ask about the extracted value.
         """
-        if name == _CAPITAL_FIELD and wrapper is not None and wrapper.value is not None:
-            amount = float(wrapper.value.monto_numerico)
+        page = evidence.page_number
+        value = wrapper.value if wrapper is not None else None
+        if name == _CAPITAL_FIELD and value is not None:
+            return f"The capital social amount on page {page} equals ${float(value.monto_numerico):,.2f} MXN"
+        if name == "fecha_constitucion" and isinstance(value, str):
+            return f"The visible text on page {page} states the incorporation date {_date_in_words(value)} ({value})"
+        if name == "numero_escritura" and isinstance(value, str):
+            return f"The visible text on page {page} states the public deed (escritura) number {value}"
+        if name == "razon_social" and isinstance(value, str):
+            return f'The visible text on page {page} names the company "{value}"'
+        if name == "notario" and value is not None:
             return (
-                f"The capital social amount on page {evidence.page_number} "
-                f"equals ${amount:,.2f} MXN"
+                f"The visible text on page {page} names {value.nombre} as the notary of "
+                f"notary office number {value.numero_notaria}"
             )
+        item = next(
+            (entry for entry in value if getattr(entry, "evidence", None) is evidence),
+            None,
+        ) if isinstance(value, list) else None
+        if name == "socios" and item is not None:
+            return (
+                f"The visible text on page {page} lists {item.nombre} as a shareholder "
+                f"with {item.acciones} shares or social parts ({item.porcentaje:g}%)"
+            )
+        if name == "representantes_legales" and item is not None:
+            return f"The visible text on page {page} appoints {item.nombre} as {item.cargo}"
+        if name == "poderes" and item is not None:
+            return f"The visible text on page {page} grants {item.otorgado_a} a {item.tipo_poder}"
         quote = " ".join(evidence.source_quote.split())[:_PREDICATE_QUOTE_LIMIT]
-        return f'The text on page {evidence.page_number} reads: "{quote}"'
+        return (
+            f"The visible text on page {page} states the substance of this passage "
+            f'(ignore accents, punctuation and line breaks): "{quote}"'
+        )
 
     def _escalate(
         self,
