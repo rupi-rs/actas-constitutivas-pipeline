@@ -15,36 +15,112 @@ Principios de diseño:
 
 ## 2. Diagrama de alto nivel
 
+Versión exportable: [arquitectura.pdf](arquitectura.pdf) (página 1: diagrama; página 2: decisiones). Fuente Mermaid en [architecture.mmd](architecture.mmd); imagen en [architecture_diagram.png](architecture_diagram.png).
+
 ```mermaid
-flowchart TD
-    IN[Entrada: PDF nativo, PDF escaneado, imagen PNG/JPG] --> H[Ingesta: SHA-256 sobre bytes originales, job_id]
-    H --> C{Caché por SHA-256}
-    C -->|acierto: OCR, relectura y extracción cruda desde caché| SC
-    C -->|fallo| INS[Inspector por página PyMuPDF]
-    INS -->|Nivel 0: >= 50 caracteres limpios| NAT[Texto nativo, confianza 1.0, costo 0]
-    INS -->|< 50 caracteres o imagen| OCR[Nivel 1: OCR local con texto, confianza y bbox por región]
-    NAT --> SC
-    OCR --> SC[Puntajes Decisions por página: legibilidad e inyección de instrucciones]
-    SC -->|regiones OCR < 0.85, o campos críticos en página con legibilidad < 0.75| CROP[Recorte físico por bbox, 200 dpi]
-    SC -->|sin dudas| TXT
-    CROP --> VLM[Relectura VLM gpt-6-luna: reading, legible]
-    VLM --> TXT[Texto de página corregido; se conservan lecturas OCR y VLM]
-    TXT --> EXT[Extracción estructurada: Responses API, JSON schema estricto, páginas en XML]
-    EXT --> RES[Interpretación: resolución temporal y de revocaciones]
-    RES --> VAL[Validación determinística: grounding, valor en cita, número y letra, fechas, spec del tipo]
-    VAL -->|campo crítico no encontrado o chequeo fallido en página escaneada| LATE[Relectura tardía acotada y una sola reextracción]
-    LATE --> RES
-    VAL --> DEC[Nivel 2: Decisions API predicate sobre el mismo recorte, abs 2p-1 frente a 0.80]
-    DEC --> ROUT{Enrutamiento y revisión de seguridad}
-    ROUT -->|sin dudas| OUT[JSON versionado con evidencia y audit_metadata]
-    ROUT -->|campo dudoso o riesgo de inyección| HR[Revisión humana: motivo, cita, página y recorte PNG]
-    HR --> OUT
-    OUT --> ST[(Almacenamiento por capas y bitácora JSONL con PII enmascarada)]
-    ST --> CONS[Consumidores: alta de cuentas, representantes, contratos, expediente]
-    ST --> EV[Evaluación contra ground truth y monitoreo]
+flowchart TB
+  subgraph ROW1[" "]
+    direction LR
+    IN["Entrada<br/>PDF nativo, PDF escaneado<br/>o imagen PNG/JPG"]
+    subgraph S1["Ingesta y enrutamiento"]
+      H["SHA-256 del original"]
+      C{{"Caché<br/>data/cache/sha256.json<br/>acierto: omite OCR, LLM,<br/>VLM y Decisions"}}
+      R["Router por página<br/>PyMuPDF<br/>&gt;= 50 caracteres limpios"]
+      N0["Nivel 0 nativo<br/>confianza 1.0, costo 0<br/>sin OCR, VLM ni Decisions"]
+      INJ["Prefiltro regex offline<br/>de inyección, sin API<br/>security_flags"]
+    end
+    subgraph S2["Nivel 1 OCR"]
+      OCR["OCR local (RapidOCR)<br/>bbox y confianza<br/>por línea"]
+    end
+    IN --> H --> C
+    C -- "fallo" --> R
+    R -- "nativa" --> N0
+    R -- "escaneada" --> OCR
+    R --> INJ
+    N0 --> CA(("A"))
+    OCR --> CB(("B"))
+    INJ --> CD(("D"))
+  end
+
+  subgraph ROW2[" "]
+    direction LR
+    CB2(("B")) --> TRG
+    subgraph S3["Nivel 2 rescate visual"]
+      TRG["Disparo: OCR &lt; 0.85 o<br/>campo crítico en<br/>página escaneada"]
+      CROP["Recorte por bbox<br/>+12 pt, 200 dpi"]
+      VLM["Relectura VLM<br/>gpt-6-luna<br/>reading, legible"]
+      PATCH["Texto parchado<br/>ambas lecturas"]
+      TRG --> CROP --> VLM --> PATCH
+    end
+    CA2(("A"))
+    subgraph S4["Extracción e interpretación"]
+      EXT["Extracción gpt-6-luna<br/>json_schema estricto<br/>páginas XML escapadas"]
+      RES["Resolutor temporal<br/>última fecha_acto<br/>RapidFuzz &gt;= 85"]
+      EXT --> RES
+    end
+    PATCH --> EXT
+    CA2 --> EXT
+    RES --> CC(("C"))
+  end
+
+  subgraph ROW3[" "]
+    direction LR
+    CC2(("C")) --> VAL
+    CD2(("D")) --> RT
+    subgraph S5["Validación y verificación"]
+      VAL["Validación determinística<br/>grounding, valor en cita,<br/>fechas, número vs letra"]
+      LATE["Ciclo acotado: crítico ausente<br/>una relectura y una reextracción"]
+      DEC["Nivel 2 Decisions API<br/>predicate sobre recorte<br/>|2p-1| vs 0.80"]
+      VAL --> DEC
+      VAL -. "ausente" .-> LATE
+    end
+    subgraph S6["Salida y consumo"]
+      RT{"Ruteo<br/>por campo"}
+      AUTO["Aprobación<br/>automática"]
+      HR["Mesa de control<br/>revisión humana"]
+      JSON["JSON versionado<br/>FieldWithEvidence<br/>prompt_sha256"]
+      ST[("Almacenes: original,<br/>caché, validados,<br/>bitácora JSONL")]
+      CONS["Consumidores: cuentas,<br/>representantes, contratos,<br/>expediente"]
+      EV["Evaluación vs<br/>ground truth"]
+      RT --> AUTO --> JSON
+      RT --> HR --> JSON
+      JSON --> ST --> CONS
+      ST --> EV
+    end
+    VAL --> RT
+    DEC --> RT
+  end
+
+  subgraph NOTAS[" "]
+    direction LR
+    NOTE1["Revisión humana si: |2p-1| &lt; 0.80,<br/>legible=false, falla determinística,<br/>falla de verificador o VLM, inyección"]
+    NOTE2["Síncrono: recibe, hash, caché, 202 + job_id<br/>Asíncrono: cola, workers, DLQ<br/>carril nativo y carril escaneado"]
+    NOTE3["Modo 1: OpenAI Cloud (gpt-6-luna, /v1/decisions)<br/>Modo 2: vLLM/TGI OpenShift vía OPENAI_BASE_URL;<br/>Decisions solo nube (2a recorte, 2b revisión)<br/>Modo 3: caché offline"]
+    NOTE1 ~~~ NOTE2 ~~~ NOTE3
+  end
+  ROW1 ~~~ ROW2
+  ROW2 ~~~ ROW3
+  ROW3 ~~~ NOTAS
+
+  classDef det fill:#E4ECF5,stroke:#1F3A5F,color:#1F2933
+  classDef ai fill:#FCEFD9,stroke:#9A6B16,color:#1F2933
+  classDef store fill:#ECEFF1,stroke:#52606D,color:#1F2933
+  classDef human fill:#F7D4D4,stroke:#A12622,color:#1F2933
+  classDef conn fill:#FFFFFF,stroke:#52606D,color:#1F2933
+  classDef note fill:#FFFFFF,stroke:#9AA5B1,color:#323F4B,stroke-dasharray:4 3
+  class IN,H,R,N0,INJ,OCR,TRG,CROP,RES,VAL,LATE,RT,AUTO,JSON,CONS,EV det
+  class VLM,PATCH,EXT,DEC ai
+  class C,ST store
+  class HR human
+  class CA,CB,CC,CD,CA2,CB2,CC2,CD2 conn
+  class NOTE1,NOTE2,NOTE3 note
+  style ROW1 fill:none,stroke:none
+  style ROW2 fill:none,stroke:none
+  style ROW3 fill:none,stroke:none
+  style NOTAS fill:none,stroke:none
 ```
 
-Orden de etapas en el orquestador: ingesta y hash, consulta de caché, inspección por página, OCR de Nivel 1 en páginas escaneadas, puntajes Decisions por página (más el prefiltro de expresiones regulares sin conexión), relectura VLM, extracción, resolución, validación, relectura tardía acotada con a lo sumo una reextracción, verificación Decisions por predicado (Nivel 2), enrutamiento por confianza y revisión de seguridad, almacenamiento.
+Orden de etapas en el pipeline: ingesta y hash SHA-256, consulta de caché, inspección por página (Nivel 0 nativo o escaneada), prefiltro de inyección por expresiones regulares sin conexión en toda página, OCR de Nivel 1 en páginas escaneadas, disparo y relectura VLM sobre recortes (Nivel 2), extracción, interpretación temporal, validación determinística (con a lo sumo una relectura y una reextracción para un campo crítico ausente), verificación Decisions por predicado sobre el recorte (único uso de Decisions), ruteo por campo hacia aprobación automática o Mesa de control, y almacenamiento.
 
 ## 3. Niveles de lectura y escalamiento
 
