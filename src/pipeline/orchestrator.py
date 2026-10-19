@@ -44,6 +44,7 @@ from src.core.exceptions import (
 from src.core.logger import StatusTag, get_logger, log_event
 from src.core.registry import ACTA_CONSTITUTIVA, DocumentRegistry, DocumentTypeSpec
 from src.ingestion.hasher import compute_sha256
+from src.ingestion.image_loader import is_image_path, load_document_bytes
 from src.ingestion.pdf_inspector import PDFInspector, render_region_png
 from src.pipeline.resolver import TemporalResolver
 from src.pipeline.validators import (
@@ -564,12 +565,13 @@ class PipelineOrchestrator:
         document_type: str = ACTA_CONSTITUTIVA,
         force_refresh: bool = False,
     ) -> ProcessingResult:
-        """Run the full pipeline for one PDF.
+        """Run the full pipeline for one PDF or one image.
 
         Parameters
         ----------
         pdf_path : Path
-            Source PDF.
+            Source PDF, or a PNG/JPG image treated as a one-page scanned
+            document.
         document_type : str, default ACTA_CONSTITUTIVA
             Registered document type.
         force_refresh : bool, default False
@@ -589,18 +591,96 @@ class PipelineOrchestrator:
             unexpected exceptions are wrapped in
             :class:`DocumentProcessingError`.
         """
+        return self.process_files(
+            [pdf_path], document_type=document_type, force_refresh=force_refresh
+        )
+
+    def process_images(
+        self,
+        paths: list[Path],
+        *,
+        acta_id: str,
+        document_type: str = ACTA_CONSTITUTIVA,
+        force_refresh: bool = False,
+    ) -> ProcessingResult:
+        """Run the full pipeline for several images forming one document.
+
+        Parameters
+        ----------
+        paths : list of Path
+            PNG/JPG images in page order; image ``N`` becomes page ``N``.
+        acta_id : str
+            Document identifier used for the output and cache metadata.
+        document_type : str, default ACTA_CONSTITUTIVA
+            Registered document type.
+        force_refresh : bool, default False
+            Ignore an existing cache entry when live providers exist.
+
+        Returns
+        -------
+        ProcessingResult
+            Output, location and review summary.
+
+        Raises
+        ------
+        PipelineError
+            On any processing failure, including non-image paths.
+        """
+        return self.process_files(
+            paths, acta_id=acta_id, document_type=document_type, force_refresh=force_refresh
+        )
+
+    def process_files(
+        self,
+        paths: list[Path],
+        *,
+        acta_id: Optional[str] = None,
+        document_type: str = ACTA_CONSTITUTIVA,
+        force_refresh: bool = False,
+    ) -> ProcessingResult:
+        """Run the full pipeline for one document made of one PDF or images.
+
+        Parameters
+        ----------
+        paths : list of Path
+            Exactly one PDF, or one or more PNG/JPG images in page order.
+        acta_id : str or None, default None
+            Document identifier; defaults to the stem of the first path.
+        document_type : str, default ACTA_CONSTITUTIVA
+            Registered document type.
+        force_refresh : bool, default False
+            Ignore an existing cache entry when live providers exist.
+
+        Returns
+        -------
+        ProcessingResult
+            Output, location and review summary.
+
+        Raises
+        ------
+        PipelineError
+            On any processing failure; unexpected exceptions are wrapped in
+            :class:`DocumentProcessingError`.
+
+        Notes
+        -----
+        The SHA-256 idempotency key is computed over the original input
+        bytes (for images, never over the wrapped PDF), so the same photos
+        always map to the same cache entry.
+        """
         job_id = uuid.uuid4().hex[:_JOB_ID_LENGTH]
         context = _DocumentContext(job_id=job_id, doc_sha256="-")
         started = time.perf_counter()
+        label = ", ".join(path.name for path in paths)
         try:
-            return self._run(pdf_path, document_type, force_refresh, context, started)
+            return self._run(paths, acta_id, document_type, force_refresh, context, started)
         except PipelineError as exc:
             self._log_failure(exc, context, started)
             raise
         except Exception as exc:
             wrapped = DocumentProcessingError(
-                f"unexpected {type(exc).__name__} while processing {pdf_path.name}: {exc}",
-                {"path": str(pdf_path)},
+                f"unexpected {type(exc).__name__} while processing {label}: {exc}",
+                {"path": label},
             )
             self._log_failure(exc, context, started)
             raise wrapped from exc
@@ -650,7 +730,8 @@ class PipelineOrchestrator:
 
     def _run(
         self,
-        pdf_path: Path,
+        paths: list[Path],
+        acta_id_override: Optional[str],
         document_type: str,
         force_refresh: bool,
         context: _DocumentContext,
@@ -660,8 +741,10 @@ class PipelineOrchestrator:
 
         Parameters
         ----------
-        pdf_path : Path
-            Source PDF.
+        paths : list of Path
+            One PDF or one or more images.
+        acta_id_override : str or None
+            Explicit document identifier, or ``None`` for the first stem.
         document_type : str
             Registered document type.
         force_refresh : bool
@@ -678,10 +761,11 @@ class PipelineOrchestrator:
         """
         spec = self._registry.get(document_type)
         stage_start = time.perf_counter()
-        pdf_bytes = self._read_pdf(pdf_path)
+        original_bytes, pdf_bytes, source_kind = self._load_source(paths)
         context.pdf_bytes = pdf_bytes
-        context.doc_sha256 = compute_sha256(pdf_bytes)
-        acta_id = pdf_path.stem
+        context.doc_sha256 = compute_sha256(original_bytes)
+        acta_id = acta_id_override or paths[0].stem
+        source_name = ", ".join(path.name for path in paths)
         log_event(
             _LOGGER,
             tag=StatusTag.INFO,
@@ -690,8 +774,18 @@ class PipelineOrchestrator:
             job_id=context.job_id,
             doc_sha256=context.doc_sha256,
             duration_ms=self._elapsed(stage_start),
-            details={"acta_id": acta_id, "bytes": len(pdf_bytes), "document_type": document_type},
-            message=f"{pdf_path.name} ingested ({len(pdf_bytes)} bytes)",
+            details={
+                "acta_id": acta_id,
+                "bytes": len(original_bytes),
+                "document_type": document_type,
+                "source_kind": source_kind,
+                "image_count": len(paths) if source_kind == "image" else 0,
+            },
+            message=(
+                f"{source_name} ingested ({len(original_bytes)} bytes, {source_kind}"
+                + (f", {len(paths)} images" if source_kind == "image" else "")
+                + ")"
+            ),
         )
 
         cache_hit, providers = self._select_providers(acta_id, force_refresh, context)
@@ -844,12 +938,46 @@ class PipelineOrchestrator:
                 )
             else:
                 self._persist_cache(
-                    pdf_path, acta_id, document_type, model_version, raw_snapshot, context
+                    source_name, acta_id, document_type, model_version, raw_snapshot, context
                 )
 
         return self._finalize(
-            pdf_path, acta_id, spec, resolved, model_version, cache_hit, context, started
+            source_name, acta_id, spec, resolved, model_version, cache_hit, context, started
         )
+
+    def _load_source(self, paths: list[Path]) -> tuple[bytes, bytes, str]:
+        """Read the input files and produce hash and processing bytes.
+
+        Parameters
+        ----------
+        paths : list of Path
+            One PDF, or one or more PNG/JPG images.
+
+        Returns
+        -------
+        tuple of (bytes, bytes, str)
+            Original bytes for hashing, PDF bytes for processing and the
+            source kind (``"pdf"`` or ``"image"``).
+
+        Raises
+        ------
+        IngestionError
+            If no path is given, images are mixed with PDFs, several PDFs
+            are given, or a file cannot be read or decoded.
+        """
+        if not paths:
+            raise IngestionError("no input files provided")
+        image_flags = [is_image_path(path) for path in paths]
+        if all(image_flags):
+            original, wrapped = load_document_bytes(paths)
+            return original, wrapped, "image"
+        if any(image_flags) or len(paths) > 1:
+            raise IngestionError(
+                "a document is either one PDF or one or more images, not a mix",
+                {"paths": [str(path) for path in paths]},
+            )
+        data = self._read_pdf(paths[0])
+        return data, data, "pdf"
 
     @staticmethod
     def _read_pdf(pdf_path: Path) -> bytes:
@@ -1543,7 +1671,7 @@ class PipelineOrchestrator:
 
     def _persist_cache(
         self,
-        pdf_path: Path,
+        source_name: str,
         acta_id: str,
         document_type: str,
         model_version: str,
@@ -1554,8 +1682,8 @@ class PipelineOrchestrator:
 
         Parameters
         ----------
-        pdf_path : Path
-            Source PDF (file name recorded).
+        source_name : str
+            Source file name(s) recorded in the cache entry.
         acta_id : str
             Document identifier.
         document_type : str
@@ -1583,7 +1711,7 @@ class PipelineOrchestrator:
             return
         payload: dict[str, Any] = {
             "doc_sha256": context.doc_sha256,
-            "document_filename": pdf_path.name,
+            "document_filename": source_name,
             "acta_id": acta_id,
             "document_type": document_type,
             "model_version": model_version,
@@ -1610,7 +1738,7 @@ class PipelineOrchestrator:
 
     def _finalize(
         self,
-        pdf_path: Path,
+        source_name: str,
         acta_id: str,
         spec: DocumentTypeSpec,
         resolved: RawDeedExtraction,
@@ -1623,8 +1751,8 @@ class PipelineOrchestrator:
 
         Parameters
         ----------
-        pdf_path : Path
-            Source PDF.
+        source_name : str
+            Source file name(s).
         acta_id : str
             Document identifier.
         spec : DocumentTypeSpec
@@ -1654,7 +1782,7 @@ class PipelineOrchestrator:
         metadata = AuditMetadata(
             job_id=context.job_id,
             doc_sha256=context.doc_sha256,
-            document_filename=pdf_path.name,
+            document_filename=source_name,
             model_version=model_version,
             total_pages=len(context.pages),
             native_pages_count=native_count,
