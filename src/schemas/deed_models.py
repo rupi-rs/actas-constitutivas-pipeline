@@ -174,10 +174,15 @@ class Evidence(StrictModel):
         Schema extension beyond spec 01: project-relative path of the PNG
         crop (bbox plus 12 pt padding, 200 dpi) sent to the vision reader
         and the Decisions verifier.
+    page_legibility_score : float or None, default None
+        Schema extension beyond spec 01: normalized Decisions
+        ``OCR_LEGIBILITY_SCORE`` (``score / (levels - 1)``) of the scanned
+        page holding the evidence; ``None`` for native pages or when the
+        score is unknown.
 
     Notes
     -----
-    The five extension fields are filled by the orchestrator only for
+    The six extension fields are filled by the orchestrator only for
     evidence inside a re-read region and are never requested from the
     extraction LLM (see :func:`openai_strict_json_schema`). Their ``None``
     defaults keep cached extractions and ground truth files valid.
@@ -194,6 +199,7 @@ class Evidence(StrictModel):
     vlm_legible: Optional[bool] = None
     verification_probability: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     crop_path: Optional[str] = None
+    page_legibility_score: Optional[float] = Field(default=None, ge=0.0, le=1.0)
 
 
 PIPELINE_EVIDENCE_FIELDS: tuple[str, ...] = (
@@ -202,6 +208,7 @@ PIPELINE_EVIDENCE_FIELDS: tuple[str, ...] = (
     "vlm_legible",
     "verification_probability",
     "crop_path",
+    "page_legibility_score",
 )
 """Evidence fields filled by the pipeline and excluded from the LLM schema."""
 
@@ -237,12 +244,14 @@ class FieldWithEvidence(StrictModel, Generic[T]):
         Parameters
         ----------
         reason : str
-            Reason to append (deduplicated, joined with ``"; "``).
+            Reason to append (joined with ``"; "``); a reason already
+            contained in the current text is not repeated, which also covers
+            reasons that themselves contain ``"; "``.
         """
         self.requires_human_review = True
         if not self.review_reason:
             self.review_reason = reason
-        elif reason not in self.review_reason.split("; "):
+        elif reason not in self.review_reason:
             self.review_reason = f"{self.review_reason}; {reason}"
 
 
@@ -435,6 +444,10 @@ class AuditMetadata(StrictModel):
         ``True`` if any field requires review.
     processing_time_ms : float
         Wall-clock processing time.
+    security_flags : list of str, default []
+        Schema extension beyond spec 01: document-level security findings,
+        for example ``"prompt_injection_suspected"``. Any flag forces
+        ``global_human_review_required``.
     """
 
     job_id: str
@@ -447,6 +460,7 @@ class AuditMetadata(StrictModel):
     ocr_pages_count: int
     global_human_review_required: bool
     processing_time_ms: float
+    security_flags: list[str] = Field(default_factory=list)
 
 
 class _DeedFields(StrictModel):
