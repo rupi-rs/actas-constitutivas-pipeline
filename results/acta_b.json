@@ -13,8 +13,7 @@
       "vlm_reading": null,
       "vlm_legible": null,
       "verification_probability": null,
-      "crop_path": null,
-      "page_legibility_score": null
+      "crop_path": null
     },
     "requires_human_review": false,
     "review_reason": null
@@ -33,8 +32,7 @@
       "vlm_reading": null,
       "vlm_legible": null,
       "verification_probability": null,
-      "crop_path": null,
-      "page_legibility_score": null
+      "crop_path": null
     },
     "requires_human_review": false,
     "review_reason": null
@@ -53,8 +51,7 @@
       "vlm_reading": null,
       "vlm_legible": null,
       "verification_probability": null,
-      "crop_path": null,
-      "page_legibility_score": null
+      "crop_path": null
     },
     "requires_human_review": false,
     "review_reason": null
@@ -77,8 +74,7 @@
       "vlm_reading": null,
       "vlm_legible": null,
       "verification_probability": null,
-      "crop_path": null,
-      "page_legibility_score": null
+      "crop_path": null
     },
     "requires_human_review": false,
     "review_reason": null
@@ -107,8 +103,7 @@
           "vlm_reading": null,
           "vlm_legible": null,
           "verification_probability": null,
-          "crop_path": null,
-          "page_legibility_score": 0.39
+          "crop_path": null
         }
       },
       {
@@ -133,8 +128,7 @@
           "vlm_reading": null,
           "vlm_legible": null,
           "verification_probability": null,
-          "crop_path": null,
-          "page_legibility_score": 0.39
+          "crop_path": null
         }
       }
     ],
@@ -155,8 +149,7 @@
       "vlm_reading": null,
       "vlm_legible": null,
       "verification_probability": null,
-      "crop_path": null,
-      "page_legibility_score": 0.39
+      "crop_path": null
     },
     "requires_human_review": false,
     "review_reason": null
@@ -185,8 +178,7 @@
           "vlm_reading": "CLAUSULA SEPTIMA.- ADMINISTRACION: GERENTE GENERAL: JORGE ALBERTO SALINAS MORA con PODER GENERAL PARA PLEITOS Y COBRANZAS Y ACTOS DE ADMINISTRACION (Individual).",
           "vlm_legible": true,
           "verification_probability": 0.97,
-          "crop_path": "outputs/crops/acta_b_p2_representantes_legales_bbox_2.png",
-          "page_legibility_score": 0.39
+          "crop_path": "outputs/crops/acta_b_p2_representantes_legales_bbox_2.png"
         }
       }
     ],
@@ -207,8 +199,7 @@
       "vlm_reading": "CLAUSULA SEPTIMA.- ADMINISTRACION: GERENTE GENERAL: JORGE ALBERTO SALINAS MORA con PODER GENERAL PARA PLEITOS Y COBRANZAS Y ACTOS DE ADMINISTRACION (Individual).",
       "vlm_legible": true,
       "verification_probability": 0.97,
-      "crop_path": "outputs/crops/acta_b_p2_representantes_legales_bbox.png",
-      "page_legibility_score": 0.39
+      "crop_path": "outputs/crops/acta_b_p2_representantes_legales_bbox.png"
     },
     "requires_human_review": false,
     "review_reason": null
@@ -236,8 +227,7 @@
           "vlm_reading": "CLAUSULA SEPTIMA.- ADMINISTRACION: GERENTE GENERAL: JORGE ALBERTO SALINAS MORA con PODER GENERAL PARA PLEITOS Y COBRANZAS Y ACTOS DE ADMINISTRACION (Individual).",
           "vlm_legible": true,
           "verification_probability": 0.97,
-          "crop_path": "outputs/crops/acta_b_p2_poderes_bbox_2.png",
-          "page_legibility_score": 0.39
+          "crop_path": "outputs/crops/acta_b_p2_poderes_bbox_2.png"
         }
       },
       {
@@ -261,8 +251,7 @@
           "vlm_reading": "CLAUSULA SEPTIMA.- ADMINISTRACION: GERENTE GENERAL: JORGE ALBERTO SALINAS MORA con PODER GENERAL PARA PLEITOS Y COBRANZAS Y ACTOS DE ADMINISTRACION (Individual).",
           "vlm_legible": true,
           "verification_probability": 0.97,
-          "crop_path": "outputs/crops/acta_b_p2_poderes_bbox_3.png",
-          "page_legibility_score": 0.39
+          "crop_path": "outputs/crops/acta_b_p2_poderes_bbox_3.png"
         }
       }
     ],
@@ -283,8 +272,7 @@
       "vlm_reading": "CLAUSULA SEPTIMA.- ADMINISTRACION: GERENTE GENERAL: JORGE ALBERTO SALINAS MORA con PODER GENERAL PARA PLEITOS Y COBRANZAS Y ACTOS DE ADMINISTRACION (Individual).",
       "vlm_legible": true,
       "verification_probability": 0.97,
-      "crop_path": "outputs/crops/acta_b_p2_poderes_bbox.png",
-      "page_legibility_score": 0.39
+      "crop_path": "outputs/crops/acta_b_p2_poderes_bbox.png"
     },
     "requires_human_review": false,
     "review_reason": null
@@ -314,8 +302,7 @@
       "vlm_reading": "QUINTA.- El capital social es de $250,000.00 (DOSCIENTOS CINCUENTA MIL PESOS 00/100 M.N.).",
       "vlm_legible": true,
       "verification_probability": 0.78,
-      "crop_path": "outputs/crops/acta_b_p2_capital_social_actual_bbox.png",
-      "page_legibility_score": 0.39
+      "crop_path": "outputs/crops/acta_b_p2_capital_social_actual_bbox.png"
     },
     "requires_human_review": true,
     "review_reason": "Low OCR confidence (0.72) and Decisions predicate confidence (0.56 < 0.80) due to overlapping notary seal on page 2 bbox [72.0, 410.0, 520.0, 455.0]."
@@ -341,14 +328,13 @@
         "vlm_reading": null,
         "vlm_legible": null,
         "verification_probability": null,
-        "crop_path": null,
-        "page_legibility_score": null
+        "crop_path": null
       },
       "revoked_appointment_evidence": []
     }
   ],
   "audit_metadata": {
-    "job_id": "5fa600fea1ec",
+    "job_id": "0ee719e44ba4",
     "doc_sha256": "06ccca91d22921abd4d8578b2eb26a7520641fc5c4310bf5c719cf9d8f10dacf",
     "document_filename": "acta_b.pdf",
     "schema_version": "1.0.0",
@@ -357,7 +343,7 @@
     "native_pages_count": 1,
     "ocr_pages_count": 1,
     "global_human_review_required": true,
-    "processing_time_ms": 144.747,
+    "processing_time_ms": 146.814,
     "security_flags": []
   }
 }
