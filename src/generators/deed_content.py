@@ -77,6 +77,9 @@ ACTA_B_VERIFIER_PREDICATE: str = "The capital social amount on page 2 equals $25
 ACTA_B_SEAL_TEXT: str = "[SELLO NOTARIAL ILEGIBLE - COPIA CERTIFICADA]"
 """Text printed inside the simulated notarial seal on Acta B page 2."""
 
+ACTA_B_INK_SMUDGE_FRAGMENTS: tuple[str, ...] = ("$250,000.00", "DOSCIENTOS CINCUENTA")
+"""Capital clause fragments occluded by dense seal ink on Acta B page 2."""
+
 ACTA_B_NOISE_SEED: int = 20200722
 """Seed of the deterministic scan noise on Acta B page 2."""
 
@@ -165,12 +168,16 @@ class RasterPageSpec:
         Region (PDF points) the seal is centred on.
     noise_seed : int
         Seed for deterministic speckle noise.
+    ink_smudge_fragments : tuple of str, default ()
+        Printed text fragments that the seal ink genuinely occludes; the
+        renderer covers each occurrence with dense, opaque stamp ink.
     """
 
     regions: tuple[RasterRegionSpec, ...]
     seal_text: str
     seal_center_bbox: tuple[float, float, float, float]
     noise_seed: int
+    ink_smudge_fragments: tuple[str, ...] = ()
 
 
 PageSpec = Union[NativePageSpec, RasterPageSpec]
@@ -556,6 +563,7 @@ ACTA_B = DeedSpec(
             seal_text=ACTA_B_SEAL_TEXT,
             seal_center_bbox=ACTA_B_CAPITAL_BBOX,
             noise_seed=ACTA_B_NOISE_SEED,
+            ink_smudge_fragments=ACTA_B_INK_SMUDGE_FRAGMENTS,
         ),
     ),
 )

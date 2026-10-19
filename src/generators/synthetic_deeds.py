@@ -128,6 +128,10 @@ PX_PER_POINT: float = RASTER_DPI / 72.0
 RASTER_FONT_PX: int = 30
 RASTER_LINE_PX: int = 40
 RASTER_SEAL_FONT_PX: int = 34
+SMUDGE_INK: tuple[int, int, int] = (52, 34, 118)
+SMUDGE_CORE_ALPHA: int = 238
+SMUDGE_HALO_ALPHA: int = 150
+SMUDGE_BLOTS_PER_FRAGMENT: int = 26
 
 _STAGE: str = "generation"
 
@@ -379,6 +383,50 @@ def _draw_seal(image: Image.Image, page: RasterPageSpec) -> Image.Image:
     return Image.alpha_composite(image.convert("RGBA"), overlay).convert("RGB")
 
 
+def _draw_ink_smudges(
+    image: Image.Image, boxes: list[tuple[float, float, float, float]], rng: random.Random
+) -> Image.Image:
+    """Cover printed fragments with dense, opaque stamp ink.
+
+    Parameters
+    ----------
+    image : PIL.Image.Image
+        RGB page image with the seal already composited.
+    boxes : list of tuple of float
+        Pixel boxes ``(x1, y1, x2, y2)`` of the occluded text fragments.
+    rng : random.Random
+        Seeded generator so the blot pattern is deterministic.
+
+    Returns
+    -------
+    PIL.Image.Image
+        New RGB image where the fragments are hidden under overlapping ink
+        blots (a near-opaque core with a softer halo), as when a rubber
+        stamp is pressed with too much ink.
+    """
+    if not boxes:
+        return image
+    overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    for x1, y1, x2, y2 in boxes:
+        width = x2 - x1
+        height = y2 - y1
+        blots = max(SMUDGE_BLOTS_PER_FRAGMENT, int(width / height * 9))
+        for _ in range(blots):
+            cx = x1 + rng.uniform(0.0, 1.0) * width
+            cy = y1 + rng.uniform(0.3, 0.7) * height
+            rx = rng.uniform(0.6, 1.3) * height
+            ry = rng.uniform(0.55, 0.9) * height
+            draw.ellipse((cx - rx, cy - ry, cx + rx, cy + ry), fill=(*SMUDGE_INK, SMUDGE_HALO_ALPHA // 4))
+        for _ in range(blots * 2):
+            cx = x1 + rng.uniform(0.02, 0.98) * width
+            cy = y1 + rng.uniform(0.35, 0.65) * height
+            rx = rng.uniform(0.25, 0.55) * height
+            ry = rng.uniform(0.3, 0.5) * height
+            draw.ellipse((cx - rx, cy - ry, cx + rx, cy + ry), fill=(*SMUDGE_INK, SMUDGE_CORE_ALPHA))
+    return Image.alpha_composite(image.convert("RGBA"), overlay).convert("RGB")
+
+
 def render_raster_page(page: RasterPageSpec) -> Image.Image:
     """Render a scanned page image deterministically.
 
@@ -395,12 +443,14 @@ def render_raster_page(page: RasterPageSpec) -> Image.Image:
     Raises
     ------
     PipelineError
-        If a region's text does not fit inside its bounding box.
+        If a region's text does not fit inside its bounding box, or an
+        ``ink_smudge_fragments`` entry does not appear on any printed line.
     """
     rng = random.Random(page.noise_seed)
     image = Image.new("RGB", (RASTER_WIDTH_PX, RASTER_HEIGHT_PX), (246, 244, 238))
     draw = ImageDraw.Draw(image)
     font = _load_font(RASTER_FONT_PX)
+    smudge_boxes: list[tuple[float, float, float, float]] = []
     for region in page.regions:
         x1, y1, x2, y2 = (_to_px(value) for value in region.bbox)
         lines = _wrap_words(region.text, x2 - x1, lambda value: draw.textlength(value, font=font))
@@ -412,7 +462,23 @@ def render_raster_page(page: RasterPageSpec) -> Image.Image:
             )
         for line in lines:
             draw.text((x1, top), line, font=font, fill=(28, 28, 34))
+            for fragment in page.ink_smudge_fragments:
+                index = line.find(fragment)
+                if index >= 0:
+                    start = x1 + draw.textlength(line[:index], font=font)
+                    end = start + draw.textlength(fragment, font=font)
+                    smudge_boxes.append((start, top, end, top + RASTER_LINE_PX))
             top += RASTER_LINE_PX
+    missing = [
+        fragment
+        for fragment in page.ink_smudge_fragments
+        if not any(fragment in region.text for region in page.regions)
+    ]
+    if missing or len(smudge_boxes) < len(page.ink_smudge_fragments):
+        raise PipelineError(
+            "ink smudge fragment not found on a single printed line",
+            {"fragments": list(page.ink_smudge_fragments), "missing": missing},
+        )
     for offset in (0, 1):
         points = [
             (1050 + step * 12, 1900 + offset + int(28 * math.sin(step / 3.0)) + rng.randint(-6, 6))
@@ -429,7 +495,7 @@ def render_raster_page(page: RasterPageSpec) -> Image.Image:
         y = rng.randint(0, RASTER_HEIGHT_PX - 1)
         tone = rng.randint(90, 200)
         draw.point((x, y), fill=(tone, tone, tone))
-    return _draw_seal(image, page)
+    return _draw_ink_smudges(_draw_seal(image, page), smudge_boxes, rng)
 
 
 # Section: pdf assembly and io

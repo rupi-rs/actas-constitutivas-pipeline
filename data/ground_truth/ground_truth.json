@@ -137,7 +137,7 @@
   "acta_b": {
     "acta_id": "acta_b",
     "document_filename": "acta_b.pdf",
-    "doc_sha256": "b2ca64ddfb49c37dba04951bd22dc61729b1888ac2b9e33b0eb65897043fdb6d",
+    "doc_sha256": "06ccca91d22921abd4d8578b2eb26a7520641fc5c4310bf5c719cf9d8f10dacf",
     "total_pages": 2,
     "scenario": "Hybrid deed: native page 1 and scanned page 2 with a notarial seal over the capital clause (OCR 0.72, verifier p=0.78).",
     "native_pages": [
